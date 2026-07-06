@@ -1,2 +1,7 @@
-# orion
-An AI Chief of Staff that maintains a persistent world model, reasons about long-term goals, and recommends the highest-leverage next actions.
+# Orion
+
+An AI Chief of Staff.
+
+> Orion maintains a persistent world model of your life, reasons over goals, projects, memories, and context, and recommends the highest-leverage next actions.
+
+**Status:** Early development.
