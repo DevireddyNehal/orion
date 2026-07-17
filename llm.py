@@ -11,7 +11,7 @@ class LLMOrchestrator:
 
     def generate_response(self, user_text: str) -> Generator[tuple[str, str], None, None]:
         """Routes and executes the user query using a direct HTTP stream to bypass library stalls."""
-        target_model = "qwen3.5:0.8b"
+        target_model = "qwen3.5:4b"
         logger.info(f"Model: {target_model}")
 
         response_system_prompt = ("You are a voice assistant. Respond instantly, concisely, and conversationally. Do not use think tags or reasoning chains. Go straight to the answer.")

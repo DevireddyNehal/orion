@@ -4,16 +4,22 @@ import threading
 import numpy as np
 import sounddevice as sd
 from kokoro import KPipeline
+from time import perf_counter
 from loguru import logger
 
 class TextToSpeech:
     def __init__(self, voice: str = "af_heart", lang_code: str = "a"):
         logger.info("[TTS] Initializing Kokoro Zero-Latency Pipeline...")
-        self.pipeline = KPipeline(lang_code=lang_code)
+        t0 = perf_counter()
+        self.pipeline = KPipeline(lang_code=lang_code,
+            repo_id="hexgrad/Kokoro-82M",
+            device="cpu"
+        )
+        print(f"KPipeline init: {perf_counter() - t0:.2f}s")
         
         # Warm up the pipeline to avoid 80s delay on first utterance
         # This forces model loading, ONNX session creation, and voice loading
-        logger.info("[TTS] Warming up pipeline (this may take ~80s)...")
+        logger.info("[TTS] Warming up pipeline (this may take a few seconds)...")
         try:
             # Consume the generator completely to force full initialization
             list(self.pipeline(" ", voice=voice))
