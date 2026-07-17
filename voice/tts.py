@@ -106,7 +106,7 @@ class TextToSpeech:
             # Send to Kokoro as soon as punctuation is detected
             if (any(p in sentence_buffer for p in [".", ",", ";", "!", "?", "\n"])
                 or (
-                    len(sentence_buffer) >= 60
+                    len(sentence_buffer) >= 10
                     and sentence_buffer.endswith(" ")
                 )
             ):
