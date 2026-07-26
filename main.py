@@ -1,6 +1,7 @@
 # ==========================================
 # FORCE PYTORCH TO BASS-BOOST CPU ONLY (NO CUDA TOUCH)
 import sys
+from numpy import rint
 import torch
 
 # Overwrite the deadlocking C++ functions with fake ones instantly
@@ -11,7 +12,7 @@ torch.cuda.device_count = lambda: 0
 from loguru import logger
 from voice.recorder import AudioRecorder
 from voice.stt import WhisperSTT
-from llm import LLMOrchestrator
+from llm.llm import LLMOrchestrator
 from voice.tts import TextToSpeech
 import time
 
@@ -51,19 +52,23 @@ def main():
 
             t = time.time()
             text = stt.transcribe(pcm_data)
-            
+            route = llm_orchestrator.intent_classifier(text)
+
+            logger.info(f"Capabilities: {route.capabilities}")
             logger.info("STT Time: {}", time.time() - t)
             logger.info("Result: {}", text)
 
             if text is not None and text.strip() != "":
                 # 1. Grab the generator object stream ONCE
-                stream = llm_orchestrator.generate_response(text)
-                
+                stream = llm_orchestrator.generate_response(
+                    text,
+                    route.model
+                )         
                 # 2. Hand the entire stream over to Kokoro
                 # It handles the logging, sentence-building, and background audio workers!
                 logger.info("AI starting response pipeline...")
                 tts.speak_stream(stream)
-                
+
                 print() # Inserts a clean newline after streaming text finishes
             
         except KeyboardInterrupt:
