@@ -54,18 +54,20 @@ def main():
             text = stt.transcribe(pcm_data)
             route = llm_orchestrator.intent_classifier(text)
 
-            logger.info(f"Capabilities: {route.capabilities}")
+            logger.info("Route model: {}", route.model)
+            logger.info("Capabilities: {}", route.capabilities)
             logger.info("STT Time: {}", time.time() - t)
             logger.info("Result: {}", text)
 
             if text is not None and text.strip() != "":
                 # 1. Grab the generator object stream ONCE
-                stream = llm_orchestrator.generate_response(
+                stream = llm_orchestrator.generate_response_stream(
                     text,
-                    route.model
-                )         
+                    route.model,
+                    prompt=llm_orchestrator.response_system_prompt
+                ) 
+                        
                 # 2. Hand the entire stream over to Kokoro
-                # It handles the logging, sentence-building, and background audio workers!
                 logger.info("AI starting response pipeline...")
                 tts.speak_stream(stream)
 

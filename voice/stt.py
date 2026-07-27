@@ -1,9 +1,14 @@
 import numpy as np
+import os
+
 from faster_whisper import WhisperModel
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class WhisperSTT:
     def __init__(self):
-        model_size = "small"
+        model_size = os.getenv("STT_MODEL_SIZE", "small")
         self.model = WhisperModel(
             model_size,
             device="cpu",
