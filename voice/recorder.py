@@ -120,7 +120,12 @@ class AudioRecorder:
                 for key, _ in selector.select(timeout=None):
                     device = key.fileobj
                     # Exhaust all events pending in buffer pipeline
-                    for event in device.read():
+                    try:
+                        events = list(device.read())
+                    except (BlockingIOError, OSError):
+                        continue
+
+                    for event in events:
                         if event.type == ecodes.EV_KEY:
                             key_event = categorize(event)
                             if key_event.scancode == self.target_key_code:

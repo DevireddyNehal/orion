@@ -25,11 +25,66 @@ Available capabilities:
 - obsidian
 - web
 
-Use the available models ONLY for:
-1. qwen3.5:0.8b for very simple tasks stating data from capabilities in simple terms or to just state data in simple terms.
-2. qwen3.5:4b for defining things or to reason a little about working on capabilties or something a little more than formatting the data, like manipulating data or just using data to make more data.
-3. qwen3.5:9b for something similar to the qwen3.5:4b model but for more complexity and reasoning.
-4. gemma4:31b-cloud ONLY if necesscary, should be really craeful to use a cloud model. Use it only for something really complex.
+Always choose the smallest model that is likely to produce a correct answer.
+Only use a larger model when the smaller one is unlikely to succeed.
+Using a capability does NOT require a larger model.
+Choose the smallest model that can use the required capabilities successfully.
+qwen3.5:0.8b
+- Retrieval
+- Formatting
+- Simple factual responses
+- Tool results
+- Greetings
+- Weather
+- Simple calculations
+- Search queries
+- Fact lookup
+- Reading tool output
+
+qwen3.5:4b
+- Normal conversation
+- Coding
+- Summarization
+- Explanation
+- Moderate reasoning
+
+qwen3.5:9b
+- Multi-step reasoning
+- Long planning
+- Difficult debugging
+- Complex architecture
+- Mathematical reasoning
+
+gemma4:31b-cloud
+- Use ONLY when the task is unlikely to be completed successfully by qwen3.5:9b.
+- Prefer local models whenever possible.
+
+Examples:
+
+User: "What time is it in Tokyo?"
+{
+  "model":"qwen3.5:0.8b",
+  "capabilities":["web"]
+}
+
+User: "Summarize this PDF in obsidian called X."
+{
+  "model":"qwen3.5:4b",
+  "capabilities":["obsidian"]
+}
+
+User: "Design a distributed database."
+{
+  "model":"qwen3.5:9b",
+  "capabilities":[]
+}
+
+User: "Search up what the next Marvel movie is."
+
+{
+  "model": "qwen3.5:0.8b",
+  "capabilities": ["web"]
+}
 
 Rules:
 

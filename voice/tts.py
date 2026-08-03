@@ -31,8 +31,9 @@ class TextToSpeech:
         self.sample_rate = 24000      
         # Thread-safe queue to pass audio chunks to the playback stream
         self.audio_queue = queue.Queue()
+        self.remainder = None
         self.starvation_start = None
-        
+
         # Queue for phrases waiting to be synthesized
         self.tts_queue = queue.Queue()
         
@@ -67,30 +68,46 @@ class TextToSpeech:
         if status:
             logger.info(f"[Audio Status Warning] {status}")
         
-        try:
-            # Try to get enough audio samples to fill the sound buffer
-            data = self.audio_queue.get_nowait()
-            
+        needed = len(outdata)
+        out_buf = np.zeros(needed, dtype=np.float32)
+        filled = 0
+
+        # 1. Use leftover audio from previous callback
+        if self.remainder is not None and len(self.remainder) > 0:
+            take = min(needed - filled, len(self.remainder))
+            out_buf[filled:filled + take] = self.remainder[:take]
+            self.remainder = self.remainder[take:]
+            filled += take
+
+        # 2. Get audio chunks from queue
+        while filled < needed:
+            try:
+                data = self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
             if self.starvation_start is not None:
                 duration = time.time() - self.starvation_start
                 logger.info(f"[AUDIO] Audio resumed. Starved for {duration:.3f} seconds")
                 self.starvation_start = None
 
-            # If the chunk is smaller than the requested buffer, pad it with zeros
-            if len(data) < len(outdata):
-                outdata[:len(data)] = data.reshape(-1, 1)
-                outdata[len(data):] = 0
-            else:
-                outdata[:] = data[:len(outdata)].reshape(-1, 1)
-                # Put the remaining audio samples back in the front of the queue
-                if len(data) > len(outdata):
-                    self.audio_queue.queue.appendleft(data[len(outdata):])
-        except queue.Empty:
-            # If no audio is ready, output absolute silence instead of stuttering
+            take = min(needed - filled, len(data))
+            out_buf[filled:filled + take] = data[:take]
+            filled += take
+
+            if take < len(data):
+                self.remainder = data[take:]
+                break
+
+        if filled == 0:
             outdata.fill(0)
             if self.starvation_start is None:
                 self.starvation_start = time.time()
                 logger.warning("[AUDIO] Queue starved")
+        else:
+            if filled < needed:
+                out_buf[filled:] = 0
+            outdata[:] = out_buf.reshape(-1, 1)
     
     def speak_stream(self, llm_generator) -> None:
         """

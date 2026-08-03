@@ -22,7 +22,10 @@ class LLMOrchestrator:
 
         BASE_DIR = Path(__file__).parent
         
-        self.ollama_url = os.getenv("OLLAMA_URL")
+        self.ollama_url = os.getenv(
+            "OLLAMA_URL",
+            "http://localhost:11434/api/chat"
+        )
 
         self.intent_model = os.getenv(
             "INTENT_MODEL",
@@ -50,8 +53,12 @@ class LLMOrchestrator:
 
         self.history = []
 
+    def _trim_history(self, max_messages: int = 20):
+        if len(self.history) > max_messages:
+            self.history = self.history[-max_messages:]
+
     def intent_classifier(self, user_text: str) -> Route:
-        logger.info("Intent model: %s", self.intent_model)
+        logger.info("Intent model: {}", self.intent_model)
 
         logger.info("Sending request to intent classifier")
         route_response = self.generate_response(
@@ -61,27 +68,29 @@ class LLMOrchestrator:
             use_history=False
         )
 
+        logger.info("Intent classifier response: {}", route_response)
+
         try:
             data = json.loads(route_response)
 
-            if (
-                isinstance(data, dict)
-                and isinstance(data.get("model"), str)
-                and isinstance(data.get("model").strip())
-                and isinstance(data.get("capabilities"), list)
-                and all(isinstance(capability, str) for capability in data["capabilities"])
-            ):
-                logger.info("Valid route returned by intent classifier")
+            model = data.get("model")
+            capabilities = data.get("capabilities")
 
+            if (
+                isinstance(model, str)
+                and model.strip()
+                and isinstance(capabilities, list)
+                and all(isinstance(c, str) for c in capabilities)
+            ):
                 return Route(
-                    model=data["model"],
-                    capabilities=data["capabilities"],
+                    model=model,
+                    capabilities=capabilities,
                 )
 
-            logger.error("Invalid route JSON structure: %s", data)
+            logger.error("Invalid route JSON structure: {}", data)
 
         except (json.JSONDecodeError, TypeError) as e:
-            logger.error("Failed to parse intent classifier response: %s", e)
+            logger.error("Failed to parse intent classifier response: {}", e)
 
         # Safe fallback
         return Route(
@@ -93,7 +102,7 @@ class LLMOrchestrator:
         self,
         user_text: str,
         target_model: str,
-        prompt: str = None,
+        prompt: str | None = None,
         use_history: bool = True
     ) -> str:
         """Generates a response from the LLM for a given user input."""
@@ -147,11 +156,7 @@ class LLMOrchestrator:
                     "role": "assistant",
                     "content": assistant_response
                 })
-
-                MAX_MESSAGES = 20
-
-                if len(self.history) > MAX_MESSAGES:
-                    self.history = self.history[-MAX_MESSAGES:]
+                self._trim_history()
 
             return assistant_response
 
@@ -163,7 +168,7 @@ class LLMOrchestrator:
         self,
         user_text: str,
         target_model: str,
-        prompt: str = None
+        prompt: str | None = None
     ) -> Generator[tuple[str, str], None, None]:
 
         logger.info(f"Model: {target_model}")
@@ -230,11 +235,7 @@ class LLMOrchestrator:
                 "role": "assistant",
                 "content": assistant_response
             })
-
-            MAX_MESSAGES = 20
-
-            if len(self.history) > MAX_MESSAGES:
-                self.history = self.history[-MAX_MESSAGES:]
+            self._trim_history()
 
         except Exception as e:
             logger.error(e)
