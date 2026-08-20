@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 # ==========================================
 # FORCE PYTORCH TO BASS-BOOST CPU ONLY (NO CUDA TOUCH)
 import sys
@@ -9,12 +12,18 @@ torch._C._cuda_getDeviceCount = lambda: 0
 torch.cuda.is_available = lambda: False
 torch.cuda.device_count = lambda: 0
 
+import re
+import time
 from loguru import logger
 from voice.recorder import AudioRecorder
 from voice.stt import WhisperSTT
 from llm.llm import LLMOrchestrator
 from voice.tts import TextToSpeech
-import time
+
+WHISPER_SILENCE_ARTIFACTS = {
+    "", "thank you", "thanks for watching", "you", "blank_audio",
+    "subtitles by", "bye", "silence", "thank you so much", "thanks"
+}
 
 def main():
     # 1. Initialize the Recorder FIRST so it gets clean, un-hijacked access to sounddevice
@@ -37,42 +46,41 @@ def main():
 
     while True:
         try:
-            t = time.time()
-
             logger.info("Waiting for recorder...")
+            t_rec_start = time.time()
             pcm_data = recorder.record()
-            logger.info("Returned from recorder")
-            logger.info("Recording...")
-            logger.info("Record: {}", time.time() - t)
+            t_speech_end = time.time()
+            logger.info("Returned from recorder | Record duration: {:.2f}s", t_speech_end - t_rec_start)
 
             if not pcm_data:
                 continue
 
+            # Pre-warm TTS pipeline asynchronously while STT and LLM run
+            tts.warmup()
+
             logger.info("Transcribing...")
-
-            t = time.time()
+            t_stt_start = time.time()
             text = stt.transcribe(pcm_data)
-            route = llm_orchestrator.intent_classifier(text)
+            stt_time = time.time() - t_stt_start
 
-            logger.info("Route model: {}", route.model)
-            logger.info("Capabilities: {}", route.capabilities)
-            logger.info("STT Time: {}", time.time() - t)
-            logger.info("Result: {}", text)
+            # Accidental press filter: if no words or only Whisper silence artifacts, silently skip
+            cleaned = re.sub(r'[^\w\s]', '', text or '').strip().lower()
+            if not cleaned or cleaned in WHISPER_SILENCE_ARTIFACTS:
+                continue
 
-            if text is not None and text.strip() != "":
-                # 1. Grab the generator object stream ONCE
-                stream = llm_orchestrator.generate_response_stream(
-                    text,
-                    route.model,
-                    prompt=llm_orchestrator.response_system_prompt
-                ) 
-                        
-                # 2. Hand the entire stream over to Kokoro
-                logger.info("AI starting response pipeline...")
-                tts.speak_stream(stream)
+            logger.info("STT Time: {:.3f}s | Result: '{}'", stt_time, text)
 
-                print() # Inserts a clean newline after streaming text finishes
-            
+            # Stream LLM generation with native tool support directly to TTS
+            logger.info("AI starting response pipeline...")
+            t_pipe_start = time.time()
+            stream = llm_orchestrator.generate_response_stream(text)
+            tts.speak_stream(stream)
+            total_turn_time = time.time() - t_speech_end
+            logger.info("Response stream finished in {:.3f}s (Total turn time from key release: {:.3f}s)",
+                        time.time() - t_pipe_start, total_turn_time)
+
+            print() # Inserts a clean newline after streaming text finishes
+        
         except KeyboardInterrupt:
             logger.info("Shutting down cleanly...")
             tts.close() # Safely releases the sound card

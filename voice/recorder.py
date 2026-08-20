@@ -6,7 +6,7 @@ from threading import Event
 import loguru
 import numpy as np
 import sounddevice as sd
-from evdev import InputDevice, categorize, ecodes, list_devices
+from evdev import InputDevice, KeyEvent, categorize, ecodes, list_devices
 
 logger = loguru.logger
 
@@ -118,6 +118,8 @@ class AudioRecorder:
         while True:
             try:
                 for key, _ in selector.select(timeout=None):
+                    if not isinstance(key.fileobj, InputDevice):
+                        continue
                     device = key.fileobj
                     # Exhaust all events pending in buffer pipeline
                     try:
@@ -128,7 +130,10 @@ class AudioRecorder:
                     for event in events:
                         if event.type == ecodes.EV_KEY:
                             key_event = categorize(event)
-                            if key_event.scancode == self.target_key_code:
+                            if (
+                                isinstance(key_event, KeyEvent)
+                                and key_event.scancode == self.target_key_code
+                            ):
                                 if key_event.keystate == 1:  # Key Down
                                     logger.info(
                                         f"🎯 Global press intercepted from: {device.name}"

@@ -24,6 +24,7 @@ Available models:
 Available capabilities:
 - obsidian
 - web
+(If none of the available capabilities are required, capabilities can be left blank / an empty list [])
 
 Always choose the smallest model that is likely to produce a correct answer.
 Only use a larger model when the smaller one is unlikely to succeed.

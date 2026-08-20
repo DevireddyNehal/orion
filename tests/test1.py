@@ -1,6 +1,7 @@
-from time import perf_counter
-from kokoro import KModel
+from ddgs import DDGS
 
-t = perf_counter()
-KModel(repo_id="hexgrad/Kokoro-82M")
-print(f"KModel: {perf_counter()-t:.2f}s")
+with DDGS(timeout=100) as ddgs:
+    news_results = list(ddgs.text("Weather in Horamavu Agara", max_results=3))
+    
+    print(news_results)
+        

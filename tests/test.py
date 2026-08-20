@@ -10,6 +10,7 @@ tavily_api_key = os.getenv("TAVILY_API_KEY")
 client = TavilyClient(tavily_api_key)
 response = client.search(
     query="When is the next F1 race and who is most likely to win it?",
-    topic="news"
+    topic="news",
+    include_answer=True
 )
-print(response["results"])
+print(response)
