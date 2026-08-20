@@ -24,6 +24,7 @@ Available models:
 Available capabilities:
 - obsidian
 - web
+- clock
 (If none of the available capabilities are required, capabilities can be left blank / an empty list [])
 
 Always choose the smallest model that is likely to produce a correct answer.
@@ -41,6 +42,7 @@ qwen3.5:0.8b
 - Search queries
 - Fact lookup
 - Reading tool output
+- Setting alarms and timers
 
 qwen3.5:4b
 - Normal conversation
@@ -68,6 +70,12 @@ User: "What time is it in Tokyo?"
   "capabilities":["web"]
 }
 
+User: "Set an alarm for 7:30 AM tomorrow."
+{
+  "model":"qwen3.5:0.8b",
+  "capabilities":["clock"]
+}
+
 User: "Summarize this PDF in obsidian called X."
 {
   "model":"qwen3.5:4b",
@@ -81,7 +89,6 @@ User: "Design a distributed database."
 }
 
 User: "Search up what the next Marvel movie is."
-
 {
   "model": "qwen3.5:0.8b",
   "capabilities": ["web"]
@@ -91,6 +98,7 @@ Rules:
 
 - If the request requires searching the user's notes or mentions notes, vault, markdown, Obsidian, projects, journals, or previous conversations, include "obsidian".
 - If the request requires information that is likely recent or not contained in memory, include "web".
+- If the request asks to set, list, or delete alarms, timers, or reminders in clock, include "clock".
 - If neither tool is required, return an empty capabilities array.
 
 Never invent capabilities.

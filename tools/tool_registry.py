@@ -1,9 +1,19 @@
 from typing import Any, Callable, Dict, List
 from loguru import logger
 from .web_search import web_search
+from .gnome_clock import (
+    set_gnome_alarm,
+    list_gnome_alarms,
+    delete_gnome_alarm,
+    set_gnome_timer,
+)
 
 TOOLS: Dict[str, Callable[..., Any]] = {
     "web_search": web_search,
+    "set_gnome_alarm": set_gnome_alarm,
+    "list_gnome_alarms": list_gnome_alarms,
+    "delete_gnome_alarm": delete_gnome_alarm,
+    "set_gnome_timer": set_gnome_timer,
 }
 
 AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
@@ -17,9 +27,83 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The search query string. Use natural, concise search terms (e.g. 'most recent F1 race winner', 'next upcoming Formula 1 race schedule')."
+                        "description": "The search query string."
                     }
                 }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_gnome_alarm",
+            "description": "Set a new alarm in Ubuntu's native GNOME Clocks app with custom time, label, and Sonar sound.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "time_str": {
+                        "type": "string",
+                        "description": "The alarm time expression (e.g., '7:30 AM', '19:45', 'in 20 minutes')."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Optional label or description for the alarm (e.g., 'Morning Workout', 'Team Sync')."
+                    },
+                    "sound": {
+                        "type": "string",
+                        "description": "Alarm sound name. Default is 'sonar'."
+                    }
+                },
+                "required": ["time_str"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_gnome_alarms",
+            "description": "List all active alarms currently set in Ubuntu's native GNOME Clocks app.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_gnome_alarm",
+            "description": "Delete an existing alarm in Ubuntu's native GNOME Clocks app by name or ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name_or_id": {
+                        "type": "string",
+                        "description": "The name or ID of the alarm to remove."
+                    }
+                },
+                "required": ["name_or_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_gnome_timer",
+            "description": "Start a countdown timer in Ubuntu's native GNOME Clocks app.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "duration_seconds": {
+                        "type": "integer",
+                        "description": "Duration of the timer in seconds (e.g., 300 for 5 minutes)."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Optional label for the timer (e.g., 'Tea timer', 'Pasta')."
+                    }
+                },
+                "required": ["duration_seconds"]
             }
         }
     }
