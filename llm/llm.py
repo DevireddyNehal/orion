@@ -105,8 +105,9 @@ class LLMOrchestrator:
             f"- For complex topics, scientific or technical concepts (e.g. physics, relativity, code architecture, history), or when explicitly asked for detail: Explain the topic thoroughly and clearly like JARVIS—providing depth, intuition, and structure as needed, without arbitrary length caps.\n\n"
             f"Fact Precision & Tools:\n"
             f"- Never fabricate, guess, or assume real-time facts, current events, recent sports champions, scores, dates, or upcoming schedules.\n"
+            f"- For reminders or task alerts (e.g., 'remind me to do X in N minutes'), call the `set_reminder` tool to schedule an internal voice reminder.\n"
             f"- If the user asks about anything current, recent, or time-sensitive, call tools like web_search as needed.\n"
-            f"- Speak naturally and articulately. Avoid unnecessary markdown headers or bullet points unless structured formatting genuinely aids understanding for complex breakdowns."
+            f"- Speak in smooth, natural, continuous spoken prose. NEVER use markdown list hyphens (- ), bullet points, bold headers, or raw LaTeX math formulas (write out math expressions in natural words, e.g., 'E equals m c squared')."
         )
 
         messages = [
@@ -133,100 +134,112 @@ class LLMOrchestrator:
         final_response_text = ""
         first_token = True
 
-        while turn < max_turns:
-            turn += 1
-            tool_calls_dict: dict[int, dict] = {}
-            turn_content = ""
-            has_tool_calls = False
+        try:
+            while turn < max_turns:
+                turn += 1
+                tool_calls_dict: dict[int, dict] = {}
+                turn_content = ""
+                has_tool_calls = False
 
-            response = self.groq_client.chat.completions.create(  # type: ignore
-                model=target_model,
-                messages=messages,
-                tools=AVAILABLE_TOOL_SCHEMAS,
-                stream=True,
-                temperature=0.1
-            )
+                response = self.groq_client.chat.completions.create(  # type: ignore
+                    model=target_model,
+                    messages=messages,
+                    tools=AVAILABLE_TOOL_SCHEMAS,
+                    stream=True,
+                    temperature=0.1
+                )
 
-            for chunk in response:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                if not delta:
-                    continue
+                for chunk in response:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if not delta:
+                        continue
 
-                if delta.tool_calls:
-                    has_tool_calls = True
-                    for tc in delta.tool_calls:
-                        idx = tc.index
-                        if idx not in tool_calls_dict:
-                            tool_calls_dict[idx] = {
-                                "id": tc.id or f"call_{idx}",
-                                "type": "function",
-                                "function": {"name": tc.function.name or "", "arguments": ""}
-                            }
-                        if tc.id:
-                            tool_calls_dict[idx]["id"] = tc.id
-                        if tc.function and tc.function.name:
-                            tool_calls_dict[idx]["function"]["name"] = tc.function.name
-                        if tc.function and tc.function.arguments:
-                            tool_calls_dict[idx]["function"]["arguments"] += tc.function.arguments
+                    if delta.tool_calls:
+                        has_tool_calls = True
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_dict:
+                                tool_calls_dict[idx] = {
+                                    "id": tc.id or f"call_{idx}",
+                                    "type": "function",
+                                    "function": {"name": tc.function.name or "", "arguments": ""}
+                                }
+                            if tc.id:
+                                tool_calls_dict[idx]["id"] = tc.id
+                            if tc.function and tc.function.name:
+                                tool_calls_dict[idx]["function"]["name"] = tc.function.name
+                            if tc.function and tc.function.arguments:
+                                tool_calls_dict[idx]["function"]["arguments"] += tc.function.arguments
 
-                if delta.content:
-                    turn_content += delta.content
-                    if not has_tool_calls:
-                        if first_token:
-                            if turn > 1:
-                                logger.info(f"[LLM Groq] Time to first token (after tool): {time.time() - t_start:.3f}s")
-                            else:
-                                logger.info(f"[LLM Groq] Time to first token: {time.time() - t_start:.3f}s")
-                            first_token = False
-                        final_response_text += delta.content
-                        yield delta.content, target_model
+                    if delta.content:
+                        turn_content += delta.content
+                        if not has_tool_calls:
+                            if first_token:
+                                if turn > 1:
+                                    logger.info(f"[LLM Groq] Time to first token (after tool): {time.time() - t_start:.3f}s")
+                                else:
+                                    logger.info(f"[LLM Groq] Time to first token: {time.time() - t_start:.3f}s")
+                                first_token = False
+                            final_response_text += delta.content
+                            yield delta.content, target_model
 
-            if not has_tool_calls:
-                break
+                if not has_tool_calls:
+                    break
 
-            if has_tool_calls and tool_calls_dict:
-                raw_calls = list(tool_calls_dict.values())
-                logger.info(f"[LLM Groq] Turn {turn}: Executing {len(raw_calls)} autonomous tool call(s)...")
+                if has_tool_calls and tool_calls_dict:
+                    raw_calls = list(tool_calls_dict.values())
+                    logger.info(f"[LLM Groq] Turn {turn}: Executing {len(raw_calls)} autonomous tool call(s)...")
 
-                messages.append({
+                    messages.append({
+                        "role": "assistant",
+                        "content": turn_content or None,
+                        "tool_calls": raw_calls
+                    })
+
+                    def _run_tool_call(call: dict) -> tuple[dict, str]:
+                        fn = call.get("function", {})
+                        fn_name = fn.get("name", "")
+                        fn_args_raw = fn.get("arguments", "{}")
+                        if isinstance(fn_args_raw, str):
+                            try:
+                                fn_args = json.loads(fn_args_raw)
+                            except Exception:
+                                fn_args = {}
+                        else:
+                            fn_args = fn_args_raw or {}
+
+                        logger.info(f"[LLM Tool Call] {fn_name}({fn_args})")
+                        tool_result = execute_tool(fn_name, fn_args)
+                        return call, tool_result
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(raw_calls), 4)) as executor:
+                        futures = [executor.submit(_run_tool_call, c) for c in raw_calls]
+                        for fut in concurrent.futures.as_completed(futures):
+                            call, tool_result = fut.result()
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": call.get("id", ""),
+                                "content": tool_result[:1500]
+                            })
+
+            if final_response_text.strip():
+                self.history.append({
                     "role": "assistant",
-                    "content": turn_content or None,
-                    "tool_calls": raw_calls
+                    "content": final_response_text
                 })
+                self._trim_history()
 
-                def _run_tool_call(call: dict) -> tuple[dict, str]:
-                    fn = call.get("function", {})
-                    fn_name = fn.get("name", "")
-                    fn_args_raw = fn.get("arguments", "{}")
-                    if isinstance(fn_args_raw, str):
-                        try:
-                            fn_args = json.loads(fn_args_raw)
-                        except Exception:
-                            fn_args = {}
-                    else:
-                        fn_args = fn_args_raw or {}
-
-                    logger.info(f"[LLM Tool Call] {fn_name}({fn_args})")
-                    tool_result = execute_tool(fn_name, fn_args)
-                    return call, tool_result
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(raw_calls), 4)) as executor:
-                    futures = [executor.submit(_run_tool_call, c) for c in raw_calls]
-                    for fut in concurrent.futures.as_completed(futures):
-                        call, tool_result = fut.result()
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": call.get("id", ""),
-                            "content": tool_result[:1500]
-                        })
-
-        self.history.append({
-            "role": "assistant",
-            "content": final_response_text
-        })
-        self._trim_history()
+        except GeneratorExit:
+            logger.info("[LLM Groq] Generation aborted early (interrupted).")
+            if final_response_text.strip():
+                self.history.append({
+                    "role": "assistant",
+                    "content": final_response_text + " [interrupted]"
+                })
+                self._trim_history()
+            raise
 
     def _stream_ollama(self, messages: list[dict], target_model: str) -> Generator[tuple[str, str], None, None]:
         t_start = time.time()
@@ -319,11 +332,22 @@ class LLMOrchestrator:
                                 "content": tool_result[:1200]
                             })
 
-            self.history.append({
-                "role": "assistant",
-                "content": final_response_text
-            })
-            self._trim_history()
+            if final_response_text.strip():
+                self.history.append({
+                    "role": "assistant",
+                    "content": final_response_text
+                })
+                self._trim_history()
+
+        except GeneratorExit:
+            logger.info("[LLM Ollama] Generation aborted early (interrupted).")
+            if final_response_text.strip():
+                self.history.append({
+                    "role": "assistant",
+                    "content": final_response_text + " [interrupted]"
+                })
+                self._trim_history()
+            raise
 
         except Exception as e:
             logger.exception(f"[LLM Error] {e}")

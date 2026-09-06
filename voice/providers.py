@@ -11,7 +11,7 @@ from typing import Any, Generator
 
 class BaseTTSProvider(ABC):
     @abstractmethod
-    def synthesize(self, text: str) -> Generator[np.ndarray, None, None]:
+    def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
         """Yields float32 numpy audio arrays at target sample rate for sounddevice."""
         pass
 
@@ -26,7 +26,7 @@ class KokoroTTSProvider(BaseTTSProvider):
 
         self.raw_voice_name = os.getenv("TTS_VOICE", voice)
         lang = os.getenv("TTS_LANG", lang_code)
-        self.speed = float(os.getenv("TTS_SPEED", str(speed if speed is not None else 1.2)))
+        self.speed = float(os.getenv("TTS_SPEED", str(speed if speed is not None else 1.0)))
 
         # Auto-detect language code if not explicitly set
         if not lang:
@@ -102,8 +102,9 @@ class KokoroTTSProvider(BaseTTSProvider):
         end = min(len(audio), non_silent[-1] + pad_samples)
         return audio[start:end]
 
-    def synthesize(self, text: str) -> Generator[np.ndarray, None, None]:
-        audio_generator = self.pipeline(text, voice=self.voice, speed=self.speed)  # type: ignore
+    def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
+        effective_speed = max(0.5, min(2.0, speed))
+        audio_generator = self.pipeline(text, voice=self.voice, speed=effective_speed)  # type: ignore
         for _, _, audio in audio_generator:
             if audio is not None and len(audio) > 0:
                 trimmed = self._trim_silence_padding(np.asarray(audio, dtype=np.float32))
@@ -162,9 +163,11 @@ class EdgeTTSProvider(BaseTTSProvider):
             logger.error(f"[EdgeTTS] MP3 decode error: {e}")
             return np.array([], dtype=np.float32)
 
-    async def _async_synthesize(self, text: str, out_queue: queue.Queue):
+    async def _async_synthesize(self, text: str, out_queue: queue.Queue, speed: float = 1.0):
         try:
-            communicate = self.edge_tts.Communicate(text, self.voice)
+            rate_pct = round((speed - 1.0) * 100)
+            rate_str = f"{rate_pct:+d}%" if rate_pct != 0 else "+0%"
+            communicate = self.edge_tts.Communicate(text, self.voice, rate=rate_str)
             mp3_data = bytearray()
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
@@ -179,13 +182,13 @@ class EdgeTTSProvider(BaseTTSProvider):
         finally:
             out_queue.put(None)
 
-    def synthesize(self, text: str) -> Generator[np.ndarray, None, None]:
+    def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
         if not text or not text.strip():
             return
 
         out_queue = queue.Queue()
         asyncio.run_coroutine_threadsafe(
-            self._async_synthesize(text, out_queue),
+            self._async_synthesize(text, out_queue, speed=speed),
             self.loop
         )
 
@@ -247,11 +250,21 @@ class PiperTTSProvider(BaseTTSProvider):
             f"length_scale={length_scale}, noise_scale={noise_scale}, noise_w_scale={noise_w_scale})"
         )
 
-    def synthesize(self, text: str) -> Generator[np.ndarray, None, None]:
+    def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
         if not text or not text.strip():
             return
 
-        for chunk in self.voice.synthesize(text, syn_config=self.syn_config):
+        from piper.config import SynthesisConfig
+        base_length_scale = float(os.getenv("PIPER_LENGTH_SCALE", "1.0"))
+        scaled_length_scale = base_length_scale / max(0.5, speed)
+
+        syn_config = SynthesisConfig(
+            length_scale=scaled_length_scale,
+            noise_scale=self.syn_config.noise_scale,
+            noise_w_scale=self.syn_config.noise_w_scale,
+        )
+
+        for chunk in self.voice.synthesize(text, syn_config=syn_config):
             if chunk.audio_float_array is not None and len(chunk.audio_float_array) > 0:
                 yield chunk.audio_float_array
 

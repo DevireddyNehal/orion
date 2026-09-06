@@ -19,6 +19,7 @@ from voice.recorder import AudioRecorder
 from voice.stt import WhisperSTT
 from llm.llm import LLMOrchestrator
 from voice.tts import TextToSpeech
+from tools.reminders import reminder_manager
 
 WHISPER_SILENCE_ARTIFACTS = {
     "", "thank you", "thanks for watching", "you", "blank_audio",
@@ -44,13 +45,18 @@ def main():
     tts = TextToSpeech()
     logger.info("TTS init time: {}s", time.time() - t)
 
+    # Connect instant interrupt / barge-in trigger to TTS engine
+    recorder.register_on_press_callback(tts.interrupt)
+
+    # Connect TTS engine to internal reminder manager
+    reminder_manager.set_tts(tts)
+
     while True:
         try:
             logger.info("Waiting for recorder...")
-            t_rec_start = time.time()
-            pcm_data = recorder.record()
+            pcm_data, record_duration = recorder.record()
             t_speech_end = time.time()
-            logger.info("Returned from recorder | Record duration: {:.2f}s", t_speech_end - t_rec_start)
+            logger.info("Returned from recorder | Record duration: {:.2f}s", record_duration)
 
             if not pcm_data:
                 continue

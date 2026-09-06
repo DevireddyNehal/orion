@@ -8,6 +8,8 @@ import numpy as np
 import sounddevice as sd
 from evdev import InputDevice, KeyEvent, categorize, ecodes, list_devices
 
+from typing import Callable
+
 logger = loguru.logger
 
 
@@ -18,7 +20,9 @@ class AudioRecorder:
         self.channels = channels
 
         self.target_key_code = ecodes.KEY_RIGHTCTRL
+        self.silence_key_code = ecodes.KEY_ESC
         self.record_event = Event()
+        self.on_press_callbacks: list[Callable[[], None]] = []
 
         self.device_paths = self._discover_keyboards()
 
@@ -27,8 +31,13 @@ class AudioRecorder:
         )
         self.listener_thread.start()
 
+    def register_on_press_callback(self, callback: Callable[[], None]):
+        """Registers a callback function to be called immediately when the record/interrupt key is pressed."""
+        if callback not in self.on_press_callbacks:
+            self.on_press_callbacks.append(callback)
 
-    def record(self) -> bytes:
+
+    def record(self) -> tuple[bytes, float]:
         chunks = []
 
         def callback(indata, frames, time, status):
@@ -40,6 +49,7 @@ class AudioRecorder:
 
         # Wait until the key is pressed
         self.record_event.wait()
+        t_rec_start = time.time()
 
         print("Recording...")
 
@@ -53,13 +63,15 @@ class AudioRecorder:
             while self.record_event.is_set():
                 sd.sleep(20)
 
+        t_rec_end = time.time()
+        record_duration = t_rec_end - t_rec_start
         print("Recording stopped.")
 
         if not chunks:
-            return b""
+            return b"", record_duration
 
         audio = np.concatenate(chunks, axis=0)
-        return audio.tobytes()
+        return audio.tobytes(), record_duration
 
     def _discover_keyboards(self) -> list:
         """Universally scans and locates all active keyboard interfaces on the host system."""
@@ -130,14 +142,36 @@ class AudioRecorder:
                     for event in events:
                         if event.type == ecodes.EV_KEY:
                             key_event = categorize(event)
+                            if not isinstance(key_event, KeyEvent):
+                                continue
+
+                            # Silence trigger (ESC) - silence without recording
                             if (
-                                isinstance(key_event, KeyEvent)
-                                and key_event.scancode == self.target_key_code
+                                key_event.scancode == self.silence_key_code
+                                and key_event.keystate == 1
                             ):
+                                logger.info(
+                                    f"🔇 Silence key (ESC) intercepted from: {device.name}"
+                                )
+                                for cb in self.on_press_callbacks:
+                                    try:
+                                        cb()
+                                    except Exception as cb_err:
+                                        logger.error(f"Callback error on ESC: {cb_err}")
+
+                            # Push-to-Talk Barge-In trigger (RIGHT CTRL)
+                            elif key_event.scancode == self.target_key_code:
                                 if key_event.keystate == 1:  # Key Down
                                     logger.info(
                                         f"🎯 Global press intercepted from: {device.name}"
                                     )
+                                    # Trigger instant interrupt of TTS/audio
+                                    for cb in self.on_press_callbacks:
+                                        try:
+                                            cb()
+                                        except Exception as cb_err:
+                                            logger.error(f"Callback error on press: {cb_err}")
+
                                     if not self.record_event.is_set():
                                         self.record_event.set()
                                 elif key_event.keystate == 0:  # Key Up

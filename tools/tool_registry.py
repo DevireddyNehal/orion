@@ -7,6 +7,11 @@ from .gnome_clock import (
     delete_gnome_alarm,
     set_gnome_timer,
 )
+from .reminders import (
+    set_reminder,
+    list_reminders,
+    cancel_reminder,
+)
 
 TOOLS: Dict[str, Callable[..., Any]] = {
     "web_search": web_search,
@@ -14,6 +19,9 @@ TOOLS: Dict[str, Callable[..., Any]] = {
     "list_gnome_alarms": list_gnome_alarms,
     "delete_gnome_alarm": delete_gnome_alarm,
     "set_gnome_timer": set_gnome_timer,
+    "set_reminder": set_reminder,
+    "list_reminders": list_reminders,
+    "cancel_reminder": cancel_reminder,
 }
 
 AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
@@ -104,6 +112,59 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["duration_seconds"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_reminder",
+            "description": "Set an internal voice reminder timer in Orion. When the timer expires, Orion will speak the reminder out loud to the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The reminder text or task (e.g., 'check the oven', 'call John', 'take medication')."
+                    },
+                    "time_str": {
+                        "type": "string",
+                        "description": "Time duration or expression (e.g., '5 minutes', '30 seconds', 'in 1 hour', '7:30 PM')."
+                    },
+                    "delay_seconds": {
+                        "type": "number",
+                        "description": "Optional direct delay in seconds (e.g. 300 for 5 minutes)."
+                    }
+                },
+                "required": ["message"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_reminders",
+            "description": "List all active pending internal reminders set in Orion.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_reminder",
+            "description": "Cancel an active pending internal reminder in Orion by ID or keyword match.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "identifier": {
+                        "type": "string",
+                        "description": "The reminder ID or keyword matching the reminder message to cancel."
+                    }
+                },
+                "required": ["identifier"]
             }
         }
     }
