@@ -1,7 +1,7 @@
 [project]
 name = "orion"
 version = "0.1.0"
-description = "Add your description here"
+description = "Ultra low-latency AI voice assistant and Chief of Staff with streaming TTS/STT, barge-in interrupts, and native tool execution."
 readme = "README.md"
 authors = [
     { name = "DevireddyNehal", email = "nehaldevireddy@gmail.com" }
