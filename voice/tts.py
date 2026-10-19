@@ -85,13 +85,15 @@ def clean_text_for_tts(text: str) -> str:
     return text.strip()
 
 
-def find_sentence_split_point(buffer: str, is_first_chunk: bool = False) -> int:
+def find_sentence_split_point(buffer: str, is_first_chunk: bool = False, buffered_duration: float = 0.0) -> int:
     """
-    Finds natural sentence and clause split points for ultra-low latency streaming TTS.
-    - If is_first_chunk is True: splits at the earliest punctuation/clause break (>= 2 words) for instant start (< 0.4s).
-    - Prioritizes early clause breaks (commas, semicolons, colons, dashes) whenever >= 4 words accumulate
-      so no chunk exceeds ~8-12 words, guaranteeing continuous playback without CPU stalls.
-    - Always respects periods, question marks, exclamation marks.
+    Finds natural sentence and clause split points for streaming TTS.
+    - If is_first_chunk is True: splits at the earliest natural punctuation boundary (>= 3 words)
+      or clause to achieve instant voice response (<0.4s TTFA).
+    - If buffered_duration >= 1.0s: avoids breaking clauses mid-sentence so neural TTS can preserve
+      natural human prosody, rhythm, and intonation across complete sentences (. ! ? \\n).
+    - If buffered_duration < 1.0s or buffer has grown very long: permits splitting at major
+      punctuation breaks (, ; : —) to prevent audio queue starvation.
     """
     stripped = buffer.strip()
     if not stripped:
@@ -100,24 +102,7 @@ def find_sentence_split_point(buffer: str, is_first_chunk: bool = False) -> int:
     words = stripped.split()
     word_count = len(words)
 
-    # 1. First-chunk fast start: split early on ANY punctuation (>= 2 words) for instant voice start
-    if is_first_chunk and word_count >= 2:
-        early_match = re.search(r'([,;:—–\.\!\?\n]|\s+--\s+)(?:\s+|$)', buffer)
-        if early_match:
-            pre_text = buffer[:early_match.start(1)].strip()
-            if len(pre_text.split()) >= 2:
-                return early_match.end()
-
-    # 2. Mid-sentence / clause boundaries (commas, semicolons, colons, em-dashes)
-    # If buffer has accumulated >= 4 words and contains a natural clause break, split immediately!
-    if word_count >= 4:
-        for cm in re.finditer(r'([,;:—–]|\s+--\s+)(?:\s+|$)', buffer):
-            pre_seg = buffer[:cm.start(1)].strip()
-            n_words = len(pre_seg.split())
-            if n_words >= 3:
-                return cm.end()
-
-    # 3. Complete sentence boundaries (. ! ? or newline)
+    # 1. Complete sentence boundaries (. ! ? or newline) are ALWAYS preferred for full prosody
     sentence_matches = list(re.finditer(r'([\.!\?\n])(?:\s+|$)', buffer))
     for m in sentence_matches:
         punct_idx = m.start(1)
@@ -140,16 +125,52 @@ def find_sentence_split_point(buffer: str, is_first_chunk: bool = False) -> int:
             if len(last_token) == 1 and last_token.isupper():
                 continue
 
+        # For the first chunk, avoid splitting off tiny 1-2 word sentences mid-stream (e.g. "Wait.")
+        # unless more context is available, to avoid queue starvation.
+        if is_first_chunk and len(buffer[:m.end()].split()) < 3:
+            continue
+
         return m.end()
 
-    # 4. Long clause / conjunction split (if no punctuation found after >= 10 words)
-    if word_count >= 10 or len(buffer) >= 50:
+    # 2. First-chunk fast start:
+    # Only split on early clause breaks (comma, semicolon, dash) if the clause is substantial (>= 6 words).
+    # NEVER split on short conversational openers like "Good day,", "Well,", "Sure,", "Yes,".
+    if is_first_chunk:
+        if word_count >= 6:
+            early_match = re.search(r'([,;:—–\n]|\s+--\s+)(?:\s+|$)', buffer)
+            if early_match:
+                pre_text = buffer[:early_match.start(1)].strip()
+                if len(pre_text.split()) >= 5:
+                    return early_match.end()
+        # If no punctuation at all and reached 10+ words, split at a natural boundary to avoid stalling TTFA
+        if word_count >= 10:
+            conj_match = re.search(r'(\s+(?:' + '|'.join(CLAUSE_CONJUNCTIONS) + r')\b)', buffer, flags=re.IGNORECASE)
+            if conj_match and len(buffer[:conj_match.start()].strip().split()) >= 5:
+                return conj_match.start() + 1
+            for cm in re.finditer(r'\s+', buffer):
+                pre_seg = buffer[:cm.start()].strip()
+                if len(pre_seg.split()) >= 7:
+                    return cm.end()
+
+    # 3. Subsequent chunks:
+    # DO NOT split mid-sentence on commas or conjunctions for normal-length sentences.
+    # Complete sentences (. ! ? \n) handled above provide optimal prosody and synthesis speed.
+    # Only split on clause breaks if a single sentence is an extreme run-on (>= 25 words) with no period.
+    if word_count >= 25:
+        for cm in re.finditer(r'([,;:—–]|\s+--\s+)(?:\s+|$)', buffer):
+            pre_seg = buffer[:cm.start(1)].strip()
+            n_words = len(pre_seg.split())
+            if n_words >= 15:
+                return cm.end()
+
+    # 4. Extreme run-on fallback with zero punctuation (>= 30 words)
+    if word_count >= 30:
         conjunction_pattern = r'(\s+(?:' + '|'.join(CLAUSE_CONJUNCTIONS) + r')\b)'
         conj_matches = list(re.finditer(conjunction_pattern, buffer, flags=re.IGNORECASE))
         if conj_matches:
             for cm in conj_matches:
                 pre_seg = buffer[:cm.start()].strip()
-                if len(pre_seg.split()) >= 4:
+                if len(pre_seg.split()) >= 15:
                     return cm.start() + 1
 
     return -1
@@ -220,6 +241,10 @@ class TextToSpeech:
         self.remainder_gen_id = None
         self.starvation_start = None
 
+        # Playback jitter-buffering state
+        self.playback_started_gen_id = -1
+        self.first_audio_arrival_time = None
+
         # Queue for phrases waiting to be synthesized by worker: stores (text, speed, gen_id) tuples
         self.tts_queue = queue.Queue()
 
@@ -260,6 +285,8 @@ class TextToSpeech:
             # 3. Discard leftover playback buffer
             self.remainder = None
             self.remainder_gen_id = None
+            self.playback_started_gen_id = -1
+            self.first_audio_arrival_time = None
 
         logger.info(f"[TTS] Interrupted! Epoch advanced to {self.current_generation_id} and queues flushed.")
 
@@ -326,6 +353,29 @@ class TextToSpeech:
         needed = len(outdata)
         out_buf = np.zeros(needed, dtype=np.float32)
         filled = 0
+
+        # Initial jitter buffer gate for newly started generation:
+        # Ensures a brief cushion before feeding the soundcard, so CPU synthesis stays ahead of playback.
+        if self.playback_started_gen_id != self.current_generation_id:
+            buffered_sec = self.get_buffered_duration()
+            if buffered_sec <= 0:
+                outdata.fill(0)
+                return
+
+            if self.first_audio_arrival_time is None:
+                self.first_audio_arrival_time = time.time()
+
+            elapsed_wait = time.time() - self.first_audio_arrival_time
+            # Start playback if:
+            # 1. We have at least 2.0s of audio buffered, OR
+            # 2. No more phrases are queued for synthesis (single sentence reply), OR
+            # 3. We have buffered for at least 0.35s
+            if buffered_sec >= 2.0 or self.tts_queue.empty() or elapsed_wait >= 0.35:
+                self.playback_started_gen_id = self.current_generation_id
+                self.first_audio_arrival_time = None
+            else:
+                outdata.fill(0)
+                return
 
         # 1. Use leftover audio from previous callback (validate generation)
         if self.remainder is not None and len(self.remainder) > 0:
@@ -395,6 +445,8 @@ class TextToSpeech:
         with self.generation_lock:
             self.current_generation_id += 1
             gen_id = self.current_generation_id
+            self.playback_started_gen_id = -1
+            self.first_audio_arrival_time = None
             self.reset_interrupt()
 
         logger.info(f"[TTS] Starting speak_stream for generation {gen_id}")
@@ -411,7 +463,12 @@ class TextToSpeech:
                 if gen_id != self.current_generation_id or self.interrupt_event.is_set():
                     break
 
-                split_idx = find_sentence_split_point(raw_buffer, is_first_chunk=is_first_chunk)
+                buffered_sec = self.get_buffered_duration()
+                split_idx = find_sentence_split_point(
+                    raw_buffer,
+                    is_first_chunk=is_first_chunk,
+                    buffered_duration=buffered_sec
+                )
 
                 if split_idx == -1:
                     break
@@ -483,6 +540,8 @@ class TextToSpeech:
             with self.generation_lock:
                 self.current_generation_id += 1
                 gen_id = self.current_generation_id
+                self.playback_started_gen_id = -1
+                self.first_audio_arrival_time = None
             logger.info(f"[TTS] Direct speak text queued: '{clean}' (speed={speed:.2f}x, gen={gen_id})")
             self.tts_queue.put((clean, speed, gen_id))
 

@@ -1,3 +1,4 @@
+import inspect
 from typing import Any, Callable, Dict, List
 from loguru import logger
 from .web_search import web_search
@@ -29,13 +30,17 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the live web for recent news, real-time facts, current weather, scores, or information not contained in your offline knowledge.",
+            "description": "Search the live web for recent news, real-time facts, current weather, scores, or information not contained in your offline knowledge. Always specify the full search text in 'query'. Pagination, ids, or cursor parameters are not supported.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
                         "description": "The search query string."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Optional number of search results to return (default: 3, max: 10)."
                     }
                 }
             }
@@ -183,9 +188,17 @@ def execute_tool(tool_name: str, arguments: dict[str, Any] | None = None) -> str
     logger.info(f"[Tool Registry] Executing '{tool_name}' with args: {arguments}")
     try:
         if tool_name == "web_search" and not arguments.get("query"):
-            return "No search query specified."
+            return "Error: No search query specified. You must provide a full search query string in 'query'. Pagination, ids, and cursors are not supported."
         func = TOOLS[tool_name]
-        result = func(**arguments)
+        sig = inspect.signature(func)
+        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+        if has_var_keyword:
+            result = func(**arguments)
+        else:
+            filtered_args = {k: v for k, v in arguments.items() if k in sig.parameters}
+            result = func(**filtered_args)
+
         return str(result)
     except Exception as e:
         logger.exception(f"[Tool Execution Error] Failed to run '{tool_name}': {e}")

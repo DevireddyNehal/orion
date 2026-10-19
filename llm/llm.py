@@ -129,25 +129,59 @@ class LLMOrchestrator:
 
     def _stream_groq(self, messages: list[dict], target_model: str) -> Generator[tuple[str, str], None, None]:
         t_start = time.time()
-        max_turns = 5
-        turn = 0
+        max_tool_rounds = 2
+        tool_rounds = 0
         final_response_text = ""
         first_token = True
 
         try:
-            while turn < max_turns:
-                turn += 1
+            while True:
                 tool_calls_dict: dict[int, dict] = {}
                 turn_content = ""
                 has_tool_calls = False
 
-                response = self.groq_client.chat.completions.create(  # type: ignore
-                    model=target_model,
-                    messages=messages,
-                    tools=AVAILABLE_TOOL_SCHEMAS,
-                    stream=True,
-                    temperature=0.1
-                )
+                tools_arg = AVAILABLE_TOOL_SCHEMAS if tool_rounds < max_tool_rounds else None
+                create_kwargs: dict[str, Any] = {
+                    "model": target_model,
+                    "messages": messages,
+                    "stream": True,
+                    "temperature": 0.1,
+                }
+                if tools_arg:
+                    create_kwargs["tools"] = tools_arg
+
+                try:
+                    response = self.groq_client.chat.completions.create(**create_kwargs)  # type: ignore
+                except Exception as api_err:
+                    err_str = str(api_err).lower()
+                    if ("tool choice" in err_str or "called a tool" in err_str or "tool_choice" in err_str) and tool_rounds >= max_tool_rounds:
+                        logger.warning(f"[LLM Groq] Caught tool choice rejection: '{api_err}'. Recovering with direct context synthesis prompt...")
+                        tool_contexts = [
+                            str(m.get("content", "")) for m in messages if m.get("role") == "tool"
+                        ]
+                        user_msgs = [m.get("content", "") for m in messages if m.get("role") == "user" and not str(m.get("content", "")).startswith("[System")]
+                        orig_user = user_msgs[-1] if user_msgs else ""
+
+                        fallback_messages = [
+                            messages[0],  # System prompt
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"User Question: {orig_user}\n\n"
+                                    f"Retrieved Information:\n" + "\n---\n".join(tool_contexts) + "\n\n"
+                                    "Please provide your final direct, spoken answer to the user based on the retrieved information above. "
+                                    "Do not attempt to use any tools."
+                                )
+                            }
+                        ]
+                        response = self.groq_client.chat.completions.create(
+                            model=target_model,
+                            messages=fallback_messages,
+                            stream=True,
+                            temperature=0.1
+                        )
+                    else:
+                        raise
 
                 for chunk in response:
                     if not chunk.choices:
@@ -177,7 +211,7 @@ class LLMOrchestrator:
                         turn_content += delta.content
                         if not has_tool_calls:
                             if first_token:
-                                if turn > 1:
+                                if tool_rounds > 0:
                                     logger.info(f"[LLM Groq] Time to first token (after tool): {time.time() - t_start:.3f}s")
                                 else:
                                     logger.info(f"[LLM Groq] Time to first token: {time.time() - t_start:.3f}s")
@@ -189,8 +223,9 @@ class LLMOrchestrator:
                     break
 
                 if has_tool_calls and tool_calls_dict:
+                    tool_rounds += 1
                     raw_calls = list(tool_calls_dict.values())
-                    logger.info(f"[LLM Groq] Turn {turn}: Executing {len(raw_calls)} autonomous tool call(s)...")
+                    logger.info(f"[LLM Groq] Round {tool_rounds}: Executing {len(raw_calls)} autonomous tool call(s)...")
 
                     messages.append({
                         "role": "assistant",
@@ -221,8 +256,20 @@ class LLMOrchestrator:
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": call.get("id", ""),
-                                "content": tool_result[:1500]
+                                "content": tool_result[:5000]
                             })
+
+                    if tool_rounds >= max_tool_rounds:
+                        logger.info(f"[LLM Groq] Max tool rounds ({max_tool_rounds}) reached. Forcing final answer synthesis.")
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "[System Note: Tool executions are complete. "
+                                "Synthesize and deliver your final verbal response to the user now based on the information gathered. "
+                                "Do NOT invoke any tools or output tool calls; reply with plain spoken text only. "
+                                "If the requested information was not found or the event did not take place, state that clearly.]"
+                            )
+                        })
 
             if final_response_text.strip():
                 self.history.append({
@@ -243,25 +290,25 @@ class LLMOrchestrator:
 
     def _stream_ollama(self, messages: list[dict], target_model: str) -> Generator[tuple[str, str], None, None]:
         t_start = time.time()
-        max_turns = 5
-        turn = 0
+        max_tool_rounds = 2
+        tool_rounds = 0
         final_response_text = ""
         first_token = True
 
         try:
-            while turn < max_turns:
-                turn += 1
+            while True:
                 payload = {
                     "model": target_model if self.provider == "ollama" else "qwen3.5:4b",
                     "messages": messages,
-                    "tools": AVAILABLE_TOOL_SCHEMAS,
                     "stream": True,
                     "think": False,
                     "keep_alive": "60m",
                     "options": {
-                        "temperature": 0.2 if turn == 1 else 0.1
+                        "temperature": 0.2 if tool_rounds == 0 else 0.1
                     }
                 }
+                if tool_rounds < max_tool_rounds:
+                    payload["tools"] = AVAILABLE_TOOL_SCHEMAS
 
                 accumulated_content = ""
                 accumulated_tool_calls: list[dict] = []
@@ -286,7 +333,7 @@ class LLMOrchestrator:
 
                         if content and not accumulated_tool_calls:
                             if first_token:
-                                if turn > 1:
+                                if tool_rounds > 0:
                                     logger.info(f"[LLM Ollama] Time to first token (after tool): {time.time() - t_start:.3f}s")
                                 else:
                                     logger.info(f"[LLM Ollama] Time to first token: {time.time() - t_start:.3f}s")
@@ -302,7 +349,8 @@ class LLMOrchestrator:
                     break
 
                 if accumulated_tool_calls:
-                    logger.info(f"[LLM Ollama] Turn {turn}: Executing {len(accumulated_tool_calls)} autonomous tool call(s)...")
+                    tool_rounds += 1
+                    logger.info(f"[LLM Ollama] Round {tool_rounds}: Executing {len(accumulated_tool_calls)} autonomous tool call(s)...")
                     messages.append({
                         "role": "assistant",
                         "content": accumulated_content or None,
@@ -329,8 +377,20 @@ class LLMOrchestrator:
                             _, tool_result = fut.result()
                             messages.append({
                                 "role": "tool",
-                                "content": tool_result[:1200]
+                                "content": tool_result[:5000]
                             })
+
+                    if tool_rounds >= max_tool_rounds:
+                        logger.info(f"[LLM Ollama] Max tool rounds ({max_tool_rounds}) reached. Forcing final answer synthesis.")
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "[System Note: Tool executions are complete. "
+                                "Synthesize and deliver your final verbal response to the user now based on the information gathered. "
+                                "Do NOT invoke any tools or output tool calls; reply with plain spoken text only. "
+                                "If the requested information was not found or the event did not take place, state that clearly.]"
+                            )
+                        })
 
             if final_response_text.strip():
                 self.history.append({
@@ -351,4 +411,7 @@ class LLMOrchestrator:
 
         except Exception as e:
             logger.exception(f"[LLM Error] {e}")
-            yield f"Error processing request: {e}", "error"
+            if "Connection refused" in str(e) or "ConnectError" in type(e).__name__:
+                yield "I am having trouble connecting to the language model server at the moment, sir.", "error"
+            else:
+                yield f"Error processing request: {e}", "error"

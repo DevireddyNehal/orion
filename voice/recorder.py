@@ -20,7 +20,6 @@ class AudioRecorder:
         self.channels = channels
 
         self.target_key_code = ecodes.KEY_RIGHTCTRL
-        self.silence_key_code = ecodes.KEY_ESC
         self.record_event = Event()
         self.on_press_callbacks: list[Callable[[], None]] = []
 
@@ -145,22 +144,8 @@ class AudioRecorder:
                             if not isinstance(key_event, KeyEvent):
                                 continue
 
-                            # Silence trigger (ESC) - silence without recording
-                            if (
-                                key_event.scancode == self.silence_key_code
-                                and key_event.keystate == 1
-                            ):
-                                logger.info(
-                                    f"🔇 Silence key (ESC) intercepted from: {device.name}"
-                                )
-                                for cb in self.on_press_callbacks:
-                                    try:
-                                        cb()
-                                    except Exception as cb_err:
-                                        logger.error(f"Callback error on ESC: {cb_err}")
-
                             # Push-to-Talk Barge-In trigger (RIGHT CTRL)
-                            elif key_event.scancode == self.target_key_code:
+                            if key_event.scancode == self.target_key_code:
                                 if key_event.keystate == 1:  # Key Down
                                     logger.info(
                                         f"🎯 Global press intercepted from: {device.name}"

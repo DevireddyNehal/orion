@@ -1,5 +1,6 @@
 import os
 from abc import ABC, abstractmethod
+from typing import Any
 from dotenv import find_dotenv, load_dotenv
 from loguru import logger
 
@@ -165,12 +166,21 @@ def get_search_provider(provider_name: str | None = None) -> BaseSearchProvider:
         return DuckDuckGoSearchProvider()
 
 
-def web_search(query: str) -> str:
-    """Dispatches search to the configured SEARCH_PROVIDER."""
+def web_search(query: str, max_results: int = 3, **kwargs: Any) -> str:
+    """Dispatches search to the configured SEARCH_PROVIDER with resilient argument handling."""
+    # Check for common hallucinated aliases for max_results
+    for alias in ("top_n", "topn", "num_results", "limit", "n"):
+        if alias in kwargs:
+            try:
+                max_results = int(kwargs[alias])
+                break
+            except (ValueError, TypeError):
+                pass
+
+    try:
+        max_results = max(1, min(max_results, 10))
+    except (ValueError, TypeError):
+        max_results = 3
+
     provider = get_search_provider()
-    return provider.search(query)
-
-
-if __name__ == "__main__":
-    result = web_search("What is the next upcoming Marvel movie?")
-    print("Result:\n", result)
+    return provider.search(query, max_results=max_results)

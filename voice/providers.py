@@ -91,8 +91,8 @@ class KokoroTTSProvider(BaseTTSProvider):
         else:
             return self.pipeline.load_voice(voice_str)
 
-    def _trim_silence_padding(self, audio: np.ndarray, threshold: float = 0.005, pad_samples: int = 960) -> np.ndarray:
-        """Trims artificial dead silence padding from Kokoro chunks while keeping a ~40ms natural breath cushion."""
+    def _trim_silence_padding(self, audio: np.ndarray, threshold: float = 0.005, pad_samples: int = 360) -> np.ndarray:
+        """Trims artificial dead silence padding while keeping a smooth ~15ms breath transition with soft edge tapers."""
         if len(audio) == 0:
             return audio
         non_silent = np.where(np.abs(audio) > threshold)[0]
@@ -100,7 +100,15 @@ class KokoroTTSProvider(BaseTTSProvider):
             return audio
         start = max(0, non_silent[0] - pad_samples)
         end = min(len(audio), non_silent[-1] + pad_samples)
-        return audio[start:end]
+        trimmed = audio[start:end].copy()
+
+        # Smooth 5ms edge fade (120 samples at 24kHz) to prevent boundary clicks between chunks
+        fade_len = min(120, len(trimmed) // 4)
+        if fade_len > 0:
+            trimmed[:fade_len] *= np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
+            trimmed[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+
+        return trimmed
 
     def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
         effective_speed = max(0.5, min(2.0, speed))
