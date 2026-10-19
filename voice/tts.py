@@ -79,7 +79,7 @@ CLAUSE_CONJUNCTIONS = (
 )
 
 
-def clean_text_for_tts(text: str) -> str:
+def clean_text_for_tts(text: str | None) -> str:
     """
     Sanitizes LLM text into clean, fluent, human-like spoken English for Neural TTS.
     Eliminates strange punctuation pauses, robotic glitches, LaTeX math, and markdown artifacts.

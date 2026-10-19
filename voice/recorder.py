@@ -1,3 +1,4 @@
+import os
 import selectors
 import threading
 import time
@@ -17,7 +18,16 @@ class AudioRecorder:
         self.samplerate = samplerate
         self.channels = channels
 
-        self.target_key_code = ecodes.KEY_RIGHTCTRL
+        self.target_key_name = os.getenv("RECORD_KEY", "KEY_RIGHTCTRL").strip().upper()
+        if hasattr(ecodes, self.target_key_name):
+            self.target_key_code = getattr(ecodes, self.target_key_name)
+        else:
+            logger.warning(
+                f"[AudioRecorder] Unknown RECORD_KEY '{self.target_key_name}'. Defaulting to KEY_RIGHTCTRL."
+            )
+            self.target_key_name = "KEY_RIGHTCTRL"
+            self.target_key_code = ecodes.KEY_RIGHTCTRL
+
         self.record_event = Event()
         self.on_press_callbacks: list[Callable[[], None]] = []
 
@@ -41,7 +51,8 @@ class AudioRecorder:
                 logger.warning(status)
             chunks.append(indata.copy())
 
-        print("Hold RIGHT CTRL key to record...")
+        display_key = self.target_key_name.replace("KEY_", "").replace("_", " ")
+        print(f"Hold {display_key} key to record...")
 
         # Wait until the key is pressed
         self.record_event.wait()
@@ -71,35 +82,56 @@ class AudioRecorder:
 
     def _discover_keyboards(self) -> list:
         """Universally scans and locates all active keyboard interfaces on the host system."""
+        # 1. Check for user-specified device path
+        explicit_device = os.getenv("RECORD_DEVICE_PATH", "").strip()
+        if explicit_device:
+            if explicit_device in list_devices():
+                logger.info(
+                    f"[AudioRecorder] Using configured RECORD_DEVICE_PATH: {explicit_device}"
+                )
+                return [explicit_device]
+            logger.warning(
+                f"[AudioRecorder] Configured RECORD_DEVICE_PATH '{explicit_device}' not found in available devices."
+            )
+
         found_devices = []
+        fallback_keyboards = []
         for path in list_devices():
             try:
                 dev = InputDevice(path)
                 capabilities = dev.capabilities()
-                # Check if device supports key events (EV_KEY)
                 if ecodes.EV_KEY in capabilities:
                     supported_keys = capabilities[ecodes.EV_KEY]
-                    # Ensure it supports standard alphanumeric/modifier layout keys
+                    # Check if it supports the target record key and standard alphanumeric keys
                     if (
-                        ecodes.KEY_RIGHTCTRL in supported_keys
+                        self.target_key_code in supported_keys
                         and ecodes.KEY_A in supported_keys
                     ):
                         found_devices.append(path)
+                    elif (
+                        ecodes.KEY_A in supported_keys
+                        or ecodes.KEY_SPACE in supported_keys
+                    ):
+                        fallback_keyboards.append(path)
             except (PermissionError, FileNotFoundError):
                 continue
 
-        if not found_devices:
-            logger.warning(
-                "No hardware keyboards matched filter criteria. Falling back to global search."
+        if found_devices:
+            logger.info(
+                f"Universal discovery engine found {len(found_devices)} keyboard(s): {found_devices}"
             )
-            return (
-                ["/dev/input/event4"] if "/dev/input/event4" in list_devices() else []
-            )
+            return found_devices
 
-        logger.info(
-            f"Universal discovery engine found {len(found_devices)} keyboard(s): {found_devices}"
+        if fallback_keyboards:
+            logger.warning(
+                f"No devices explicitly advertised {self.target_key_name}. Falling back to general keyboard interface(s): {fallback_keyboards}"
+            )
+            return fallback_keyboards
+
+        logger.warning(
+            "No hardware keyboards matched filter criteria. Falling back to global search."
         )
-        return found_devices
+        return ["/dev/input/event4"] if "/dev/input/event4" in list_devices() else []
 
     def _evdev_listener_loop(self):
         selector = selectors.DefaultSelector()

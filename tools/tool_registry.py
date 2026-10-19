@@ -184,7 +184,7 @@ def execute_tool(tool_name: str, arguments: dict[str, Any] | None = None) -> str
 
     logger.info(f"[Tool Registry] Executing '{tool_name}' with args: {arguments}")
     try:
-        if tool_name == "web_search" and not arguments.get("query"):
+        if tool_name == "web_search" and not str(arguments.get("query") or "").strip():
             return "Error: No search query specified. You must provide a full search query string in 'query'. Pagination, ids, and cursors are not supported."
         func = TOOLS[tool_name]
         sig = inspect.signature(func)

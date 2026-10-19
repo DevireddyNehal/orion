@@ -32,10 +32,10 @@ class KokoroTTSProvider(BaseTTSProvider):
     ):
         from kokoro import KPipeline
 
-        self.raw_voice_name = os.getenv("TTS_VOICE", voice)
-        lang = os.getenv("TTS_LANG", lang_code)
+        self.raw_voice_name = os.getenv("TTS_VOICE") or voice
+        lang = os.getenv("TTS_LANG") or lang_code
         self.speed = float(
-            os.getenv("TTS_SPEED", str(speed if speed is not None else 1.0))
+            os.getenv("TTS_SPEED") or str(speed if speed is not None else 1.0)
         )
 
         # Auto-detect language code if not explicitly set
@@ -151,7 +151,7 @@ class EdgeTTSProvider(BaseTTSProvider):
         import edge_tts
 
         self.edge_tts = edge_tts
-        self.voice = os.getenv("TTS_VOICE", voice)
+        self.voice = os.getenv("TTS_VOICE") or voice
         self.sample_rate = target_sample_rate
 
         # Persistent background asyncio event loop

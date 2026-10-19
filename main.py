@@ -61,8 +61,8 @@ def main():
     # Connect TTS engine to internal reminder manager
     reminder_manager.set_tts(tts)
 
-    while True:
-        try:
+    try:
+        while True:
             logger.info("Waiting for recorder...")
             pcm_data, record_duration = recorder.record()
             t_speech_end = time.time()
@@ -102,10 +102,10 @@ def main():
 
             print()  # Inserts a clean newline after streaming text finishes
 
-        except KeyboardInterrupt:
-            logger.info("Shutting down cleanly...")
-            tts.close()  # Safely releases the sound card
-            break
+    except KeyboardInterrupt:
+        logger.info("Shutting down cleanly...")
+    finally:
+        tts.close()  # Safely releases the sound card
 
 
 if __name__ == "__main__":
