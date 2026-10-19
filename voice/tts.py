@@ -76,6 +76,8 @@ CLAUSE_CONJUNCTIONS = (
     "where",
     "when",
     "as",
+    "that",
+    "who",
 )
 
 
@@ -132,12 +134,14 @@ def find_sentence_split_point(
 ) -> int:
     """
     Finds natural sentence and clause split points for streaming TTS.
-    - If is_first_chunk is True: splits at the earliest natural punctuation boundary (>= 3 words)
-      or clause to achieve instant voice response (<0.4s TTFA).
-    - If buffered_duration >= 1.0s: avoids breaking clauses mid-sentence so neural TTS can preserve
-      natural human prosody, rhythm, and intonation across complete sentences (. ! ? \\n).
-    - If buffered_duration < 1.0s or buffer has grown very long: permits splitting at major
-      punctuation breaks (, ; : —) to prevent audio queue starvation.
+    - Merges tiny conversational openers (<= 4 words like 'Certainly, sir.') with the following clause
+      for the first chunk so the soundcard starts with a strong audio runway.
+    - Preserves full prosody by keeping complete sentences intact when <= 16 words.
+    - If a sentence is long (>= 17 words) with clause punctuation (commas, dashes, colons),
+      splits at a balanced clause boundary (7-13 words) to ensure CPU synthesis speed stays
+      ahead of audio playback, preventing queue starvation.
+    - For initial chunks without full sentence endings, only splits at legitimate punctuation
+      boundaries (>= 6 words); never splits mid-thought across arbitrary unpunctuated whitespace.
     """
     stripped = buffer.strip()
     if not stripped:
@@ -146,15 +150,16 @@ def find_sentence_split_point(
     words = stripped.split()
     word_count = len(words)
 
-    # 1. Complete sentence boundaries (. ! ? or newline) are ALWAYS preferred for full prosody
+    # 1. Check for complete sentence boundaries (. ! ? \n)
     sentence_matches = list(re.finditer(r"([\.!\?\n])(?:\s+|$)", buffer))
+    valid_sentence_match = None
+
     for m in sentence_matches:
         punct_idx = m.start(1)
         punct_char = buffer[punct_idx]
 
-        # Guard against false sentence endings
+        # Guard against false sentence endings: decimals (e.g. 3.14)
         if punct_char == ".":
-            # Check for decimals (e.g. 3.14, 72.5)
             if (
                 punct_idx > 0
                 and punct_idx + 1 < len(buffer)
@@ -173,58 +178,90 @@ def find_sentence_split_point(
             if len(last_token) == 1 and last_token.isupper():
                 continue
 
-        # For the first chunk, avoid splitting off tiny 1-2 word sentences mid-stream (e.g. "Wait.")
-        # unless more context is available, to avoid queue starvation.
-        if is_first_chunk and len(buffer[: m.end()].split()) < 3:
+        # For the first chunk, merge tiny conversational openers (<= 4 words, e.g. "Certainly, sir.")
+        # so the audio queue begins with a substantial buffer rather than a 0.9s starvation trap.
+        cand_words = len(buffer[: m.end()].split())
+        if is_first_chunk and cand_words <= 4:
             continue
 
-        return m.end()
+        valid_sentence_match = m
+        break
 
-    # 2. First-chunk fast start:
-    # Only split on early clause breaks (comma, semicolon, dash) if the clause is substantial (>= 6 words).
-    # NEVER split on short conversational openers like "Good day,", "Well,", "Sure,", "Yes,".
-    if is_first_chunk:
-        if word_count >= 6:
-            early_match = re.search(r"([,;:—–\n]|\s+--\s+)(?:\s+|$)", buffer)
-            if early_match:
-                pre_text = buffer[: early_match.start(1)].strip()
-                if len(pre_text.split()) >= 5:
-                    return early_match.end()
-        # If no punctuation at all and reached 10+ words, split at a natural boundary to avoid stalling TTFA
-        if word_count >= 10:
-            conj_match = re.search(
-                r"(\s+(?:" + "|".join(CLAUSE_CONJUNCTIONS) + r")\b)",
-                buffer,
-                flags=re.IGNORECASE,
-            )
-            if conj_match and len(buffer[: conj_match.start()].strip().split()) >= 5:
-                return conj_match.start() + 1
-            for cm in re.finditer(r"\s+", buffer):
-                pre_seg = buffer[: cm.start()].strip()
-                if len(pre_seg.split()) >= 7:
-                    return cm.end()
+    if valid_sentence_match is not None:
+        candidate_sentence = buffer[: valid_sentence_match.end()]
+        sentence_words = candidate_sentence.split()
+        n_sentence_words = len(sentence_words)
 
-    # 3. Subsequent chunks:
-    # DO NOT split mid-sentence on commas or conjunctions for normal-length sentences.
-    # Complete sentences (. ! ? \n) handled above provide optimal prosody and synthesis speed.
-    # Only split on clause breaks if a single sentence is an extreme run-on (>= 25 words) with no period.
-    if word_count >= 25:
-        for cm in re.finditer(r"([,;:—–]|\s+--\s+)(?:\s+|$)", buffer):
-            pre_seg = buffer[: cm.start(1)].strip()
-            n_words = len(pre_seg.split())
-            if n_words >= 15:
+        # For the first chunk, target 6-9 words for fast ~1.5s TTFA without starvation.
+        # For subsequent chunks, allow up to 16 words for complete natural sentence prosody.
+        max_words = 9 if is_first_chunk else 16
+        if n_sentence_words <= max_words:
+            return valid_sentence_match.end()
+
+        # If sentence exceeds max_words, check for natural clause breaks (, ; : —)
+        clause_matches = list(
+            re.finditer(r"([,;:—–]|\s+--\s+)(?:\s+|$)", candidate_sentence)
+        )
+        for cm in clause_matches:
+            pre_seg = candidate_sentence[: cm.start(1)].strip()
+            pre_count = len(pre_seg.split())
+            rem_count = n_sentence_words - pre_count
+            target_min = 6 if is_first_chunk else 7
+            target_max = 9 if is_first_chunk else 13
+            if target_min <= pre_count <= target_max and rem_count >= 4:
                 return cm.end()
 
-    # 4. Extreme run-on fallback with zero punctuation (>= 30 words)
-    if word_count >= 30:
-        conjunction_pattern = r"(\s+(?:" + "|".join(CLAUSE_CONJUNCTIONS) + r")\b)"
-        conj_matches = list(
-            re.finditer(conjunction_pattern, buffer, flags=re.IGNORECASE)
-        )
+        # If it's the first chunk and no clause punctuation fell in 6-9 words,
+        # split at a natural conjunction (that, which, because, since, and, but, so)
+        if is_first_chunk:
+            conj_pattern = r"(\s+(?:" + "|".join(CLAUSE_CONJUNCTIONS) + r")\b)"
+            for conj in re.finditer(conj_pattern, candidate_sentence, flags=re.IGNORECASE):
+                pre_seg = candidate_sentence[: conj.start()].strip()
+                pre_count = len(pre_seg.split())
+                if 6 <= pre_count <= 9:
+                    return conj.start() + 1
+
+        # Fallback clause search:
+        for cm in clause_matches:
+            pre_seg = candidate_sentence[: cm.start(1)].strip()
+            pre_count = len(pre_seg.split())
+            target_limit = 10 if is_first_chunk else 20
+            if 6 <= pre_count <= target_limit:
+                return cm.end()
+
+        # Fallback to full sentence if no suitable clause punctuation was found
+        return valid_sentence_match.end()
+
+    # 2. No complete sentence punctuation in buffer yet (LLM still streaming current sentence):
+    # Check if we can split an early clause (comma, dash, colon)
+    clause_match = re.search(r"([,;:—–]|\s+--\s+)(?:\s+|$)", buffer)
+    if clause_match:
+        pre_text = buffer[: clause_match.start(1)].strip()
+        pre_words = len(pre_text.split())
+        post_words = len(buffer[clause_match.end() :].split())
+        target_min = 6 if is_first_chunk else 7
+        target_max = 9 if is_first_chunk else 14
+        if target_min <= pre_words <= target_max and post_words >= 1:
+            return clause_match.end()
+
+    # For first chunk without punctuation yet: check conjunction in 6-9 words
+    if is_first_chunk and word_count >= 7:
+        conj_pattern = r"(\s+(?:" + "|".join(CLAUSE_CONJUNCTIONS) + r")\b)"
+        for conj in re.finditer(conj_pattern, buffer, flags=re.IGNORECASE):
+            pre_seg = buffer[: conj.start()].strip()
+            pre_count = len(pre_seg.split())
+            post_words = len(buffer[conj.start() :].split())
+            if 6 <= pre_count <= 9 and post_words >= 2:
+                return conj.start() + 1
+
+    # 3. Extreme run-on fallback with zero punctuation (>= 22 words with no commas or periods)
+    if word_count >= 22:
+        conj_pattern = r"(\s+(?:" + "|".join(CLAUSE_CONJUNCTIONS) + r")\b)"
+        conj_matches = list(re.finditer(conj_pattern, buffer, flags=re.IGNORECASE))
         if conj_matches:
             for cm in conj_matches:
                 pre_seg = buffer[: cm.start()].strip()
-                if len(pre_seg.split()) >= 15:
+                if len(pre_seg.split()) >= 10:
                     return cm.start() + 1
 
     return -1
@@ -449,11 +486,16 @@ class TextToSpeech:
                 self.first_audio_arrival_time = time.time()
 
             elapsed_wait = time.time() - self.first_audio_arrival_time
-            # Start playback if:
-            # 1. We have at least 2.0s of audio buffered, OR
-            # 2. No more phrases are queued for synthesis (single sentence reply), OR
-            # 3. We have buffered for at least 0.35s
-            if buffered_sec >= 2.0 or self.tts_queue.empty() or elapsed_wait >= 0.35:
+            # Adaptive jitter buffer gate:
+            # 1. If tts_queue is empty (single-sentence response), start immediately with 0 delay.
+            # 2. If multi-phrase response is queued, require at least 1.8s of audio (or 0.60s max wait)
+            #    so CPU synthesis maintains an unbroken lead ahead of playback.
+            should_start = (
+                self.tts_queue.empty()
+                or buffered_sec >= 1.8
+                or elapsed_wait >= 0.60
+            )
+            if should_start:
                 self.playback_started_gen_id = self.current_generation_id
                 self.first_audio_arrival_time = None
             else:
@@ -512,7 +554,9 @@ class TextToSpeech:
 
         if filled == 0:
             outdata.fill(0)
-            if self.starvation_start is None:
+            # Only report starvation if synthesis is still pending (more work in tts_queue).
+            # Once speech has legitimately completed, returning to silence is normal.
+            if self.starvation_start is None and not self.tts_queue.empty():
                 self.starvation_start = time.time()
                 logger.warning("[AUDIO] Queue starved")
         else:

@@ -97,8 +97,60 @@ class TestTTSUtilities(unittest.TestCase):
     def test_find_sentence_split_point_preserves_abbreviations(self):
         buffer = "Dr. Watson examined the sample."
         idx = find_sentence_split_point(buffer)
-        # Should not split on Dr.
         self.assertEqual(buffer[:idx], "Dr. Watson examined the sample.")
+
+    def test_find_sentence_split_point_preserves_first_sentence_without_mid_thought_splits(self):
+        # 8-word sentence is preserved intact for first chunk
+        s1 = "Torque is the twisting force causing angular rotation."
+        idx = find_sentence_split_point(s1, is_first_chunk=True)
+        self.assertEqual(s1[:idx].strip(), s1.strip())
+
+        # For subsequent chunks, up to 16 words are preserved intact
+        s2 = "Torque, sir, is the twisting force that makes an object rotate around an axis."
+        idx2 = find_sentence_split_point(s2, is_first_chunk=False)
+        self.assertEqual(s2[:idx2].strip(), s2.strip())
+
+    def test_find_sentence_split_point_splits_long_run_on_sentences_at_clauses(self):
+        s2 = (
+            "Imagine pushing a door, the farther your hand is from the hinges, "
+            "the easier it is to swing the door open, that distance multiplied by "
+            "the strength of your push is the torque."
+        )
+        # First split should happen at the second comma ('hinges,')
+        idx1 = find_sentence_split_point(s2, is_first_chunk=False)
+        self.assertIn("hinges,", s2[:idx1])
+
+        # Second split should happen at 'open,'
+        rem2 = s2[idx1:].strip()
+        idx2 = find_sentence_split_point(rem2, is_first_chunk=False)
+        self.assertIn("open,", rem2[:idx2])
+
+        # Third split should complete the remainder
+        rem3 = rem2[idx2:].strip()
+        idx3 = find_sentence_split_point(rem3, is_first_chunk=False)
+        self.assertEqual(rem3[:idx3].strip(), rem3.strip())
+
+    def test_find_sentence_split_point_merges_short_openers_and_caps_first_chunk(self):
+        text = "Certainly, sir. Torque is the twisting force that makes an object rotate around an axis, much like how you turn a wrench."
+        idx = find_sentence_split_point(text, is_first_chunk=True)
+        # Merges 'Certainly, sir.' with introductory clause up to 'force', capping at 7 words (~1.5s TTFA)
+        self.assertIn("Certainly, sir.", text[:idx])
+        self.assertIn("twisting force", text[:idx])
+        self.assertNotIn("axis,", text[:idx])
+
+        # Chunk 2 takes the next balanced clause up to 'axis,'
+        rem = text[idx:].strip()
+        idx2 = find_sentence_split_point(rem, is_first_chunk=False)
+        self.assertIn("axis,", rem[:idx2])
+
+    def test_find_sentence_split_point_splits_long_clause_before_twenty_words(self):
+        text = (
+            "Special relativity tells us that the laws of physics are the same "
+            "for all observers moving at constant speed, and that the speed of "
+            "light is the ultimate speed limit."
+        )
+        idx = find_sentence_split_point(text, is_first_chunk=False)
+        self.assertIn("constant speed,", text[:idx])
 
 
 if __name__ == "__main__":
