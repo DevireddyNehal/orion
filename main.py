@@ -1,10 +1,9 @@
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 
 # ==========================================
 # FORCE PYTORCH TO BASS-BOOST CPU ONLY (NO CUDA TOUCH)
-import sys
-from numpy import rint
 import torch
 
 # Overwrite the deadlocking C++ functions with fake ones instantly
@@ -14,17 +13,28 @@ torch.cuda.device_count = lambda: 0
 
 import re
 import time
+
 from loguru import logger
+
+from llm.llm import LLMOrchestrator
+from tools.reminders import reminder_manager
 from voice.recorder import AudioRecorder
 from voice.stt import WhisperSTT
-from llm.llm import LLMOrchestrator
 from voice.tts import TextToSpeech
-from tools.reminders import reminder_manager
 
 WHISPER_SILENCE_ARTIFACTS = {
-    "", "thank you", "thanks for watching", "you", "blank_audio",
-    "subtitles by", "bye", "silence", "thank you so much", "thanks"
+    "",
+    "thank you",
+    "thanks for watching",
+    "you",
+    "blank_audio",
+    "subtitles by",
+    "bye",
+    "silence",
+    "thank you so much",
+    "thanks",
 }
+
 
 def main():
     # 1. Initialize the Recorder FIRST so it gets clean, un-hijacked access to sounddevice
@@ -56,7 +66,9 @@ def main():
             logger.info("Waiting for recorder...")
             pcm_data, record_duration = recorder.record()
             t_speech_end = time.time()
-            logger.info("Returned from recorder | Record duration: {:.2f}s", record_duration)
+            logger.info(
+                "Returned from recorder | Record duration: {:.2f}s", record_duration
+            )
 
             if not pcm_data:
                 continue
@@ -70,7 +82,7 @@ def main():
             stt_time = time.time() - t_stt_start
 
             # Accidental press filter: if no words or only Whisper silence artifacts, silently skip
-            cleaned = re.sub(r'[^\w\s]', '', text or '').strip().lower()
+            cleaned = re.sub(r"[^\w\s]", "", text or "").strip().lower()
             if not cleaned or cleaned in WHISPER_SILENCE_ARTIFACTS:
                 continue
 
@@ -82,15 +94,19 @@ def main():
             stream = llm_orchestrator.generate_response_stream(text)
             tts.speak_stream(stream)
             total_turn_time = time.time() - t_speech_end
-            logger.info("Response stream finished in {:.3f}s (Total turn time from key release: {:.3f}s)",
-                        time.time() - t_pipe_start, total_turn_time)
+            logger.info(
+                "Response stream finished in {:.3f}s (Total turn time from key release: {:.3f}s)",
+                time.time() - t_pipe_start,
+                total_turn_time,
+            )
 
-            print() # Inserts a clean newline after streaming text finishes
-        
+            print()  # Inserts a clean newline after streaming text finishes
+
         except KeyboardInterrupt:
             logger.info("Shutting down cleanly...")
-            tts.close() # Safely releases the sound card
+            tts.close()  # Safely releases the sound card
             break
+
 
 if __name__ == "__main__":
     main()

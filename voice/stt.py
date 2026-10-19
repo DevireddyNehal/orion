@@ -1,9 +1,10 @@
 import io
 import os
 import wave
+
 import numpy as np
-from loguru import logger
 from dotenv import load_dotenv
+from loguru import logger
 
 load_dotenv()
 
@@ -11,6 +12,7 @@ load_dotenv()
 class LocalWhisperSTT:
     def __init__(self):
         from faster_whisper import WhisperModel
+
         model_size = os.getenv("STT_MODEL_SIZE", "base.en")
         local_only = os.getenv("STT_LOCAL_FILES_ONLY", "false").lower() in ("true", "1")
         logger.info(f"[LocalSTT] Initializing faster-whisper ('{model_size}')...")
@@ -19,14 +21,11 @@ class LocalWhisperSTT:
                 model_size,
                 device="cpu",
                 compute_type="int8",
-                local_files_only=local_only
+                local_files_only=local_only,
             )
         except Exception:
             self.model = WhisperModel(
-                model_size,
-                device="cpu",
-                compute_type="int8",
-                local_files_only=False
+                model_size, device="cpu", compute_type="int8", local_files_only=False
             )
         logger.info("[LocalSTT] Local Whisper initialized successfully.")
 
@@ -36,11 +35,11 @@ class LocalWhisperSTT:
         audio = audio.astype(np.float32) / pcm_divisor
         beam_size = int(os.getenv("STT_BEAM_SIZE", "2"))
         segments, _ = self.model.transcribe(
-            audio, 
+            audio,
             language="en",
             beam_size=beam_size,
             vad_filter=True,
-            condition_on_previous_text=False
+            condition_on_previous_text=False,
         )
         return " ".join(s.text.strip() for s in segments)
 
@@ -48,6 +47,7 @@ class LocalWhisperSTT:
 class GroqSTT:
     def __init__(self, api_key: str | None = None):
         from groq import Groq
+
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
         if not self.api_key:
             raise ValueError("[GroqSTT] GROQ_API_KEY not found.")
@@ -68,7 +68,7 @@ class GroqSTT:
             file=("audio.wav", buf.read()),
             model=self.model,
             language="en",
-            response_format="text"
+            response_format="text",
         )
         if isinstance(response, str):
             return response.strip()
@@ -80,6 +80,7 @@ class WhisperSTT:
     Unified STT Interface.
     Routes to GroqSTT if configured / available, with automatic fallback to LocalWhisperSTT.
     """
+
     def __init__(self):
         stt_provider = os.getenv("STT_PROVIDER", "").lower().strip()
         groq_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -88,13 +89,17 @@ class WhisperSTT:
         self.local_stt: LocalWhisperSTT | None = None
 
         if stt_provider == "local":
-            logger.info("[STT] STT_PROVIDER is set to 'local'. Using on-device Whisper.")
+            logger.info(
+                "[STT] STT_PROVIDER is set to 'local'. Using on-device Whisper."
+            )
             self.local_stt = LocalWhisperSTT()
         elif groq_key or stt_provider == "groq":
             try:
                 self.groq_stt = GroqSTT(api_key=groq_key)
             except Exception as e:
-                logger.warning(f"[STT] Could not initialize Groq STT ({e}). Falling back to local Whisper.")
+                logger.warning(
+                    f"[STT] Could not initialize Groq STT ({e}). Falling back to local Whisper."
+                )
                 self.local_stt = LocalWhisperSTT()
         else:
             logger.info("[STT] No GROQ_API_KEY found. Defaulting to on-device Whisper.")
@@ -115,4 +120,3 @@ class WhisperSTT:
                 return self._ensure_local().transcribe(pcm_bytes)
         else:
             return self._ensure_local().transcribe(pcm_bytes)
-

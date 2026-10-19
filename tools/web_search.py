@@ -1,6 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 from typing import Any
+
 from dotenv import find_dotenv, load_dotenv
 from loguru import logger
 
@@ -12,7 +13,6 @@ class BaseSearchProvider(ABC):
     @abstractmethod
     def search(self, query: str, max_results: int = 3) -> str:
         """Executes web search and returns formatted snippets."""
-        pass
 
 
 class TavilySearchProvider(BaseSearchProvider):
@@ -26,13 +26,14 @@ class TavilySearchProvider(BaseSearchProvider):
 
         try:
             from tavily import TavilyClient
-            logger.info(f"[Tavily] Searching web for: {repr(query)}")
+
+            logger.info(f"[Tavily] Searching web for: {query!r}")
             client = TavilyClient(api_key=self.api_key)
             response = client.search(
                 query,
                 search_depth="basic",
                 max_results=max_results,
-                include_answer=False  # Disabled slow/hallucinatory AI answer generator for speed & direct accuracy
+                include_answer=False,  # Disabled slow/hallucinatory AI answer generator for speed & direct accuracy
             )
 
             output_parts = []
@@ -43,7 +44,9 @@ class TavilySearchProvider(BaseSearchProvider):
                 output_parts.append(f"[{i}] {title}: {snippet}")
 
             formatted = "\n".join(output_parts)
-            return formatted if formatted.strip() else "No relevant search results found."
+            return (
+                formatted if formatted.strip() else "No relevant search results found."
+            )
 
         except Exception as e:
             logger.error(f"[Tavily Error] {e}")
@@ -58,8 +61,24 @@ class DuckDuckGoSearchProvider(BaseSearchProvider):
             except ImportError:
                 from duckduckgo_search import DDGS
 
-            logger.info(f"[DuckDuckGo] Searching web for: {repr(query)}")
-            is_temporal = any(w in query.lower() for w in ("last", "latest", "next", "recent", "today", "yesterday", "winner", "score", "upcoming", "schedule", "won", "current"))
+            logger.info(f"[DuckDuckGo] Searching web for: {query!r}")
+            is_temporal = any(
+                w in query.lower()
+                for w in (
+                    "last",
+                    "latest",
+                    "next",
+                    "recent",
+                    "today",
+                    "yesterday",
+                    "winner",
+                    "score",
+                    "upcoming",
+                    "schedule",
+                    "won",
+                    "current",
+                )
+            )
 
             output_parts = []
             with DDGS() as ddgs:
@@ -80,7 +99,9 @@ class DuckDuckGoSearchProvider(BaseSearchProvider):
                 if len(output_parts) < max_results:
                     remaining = max_results - len(output_parts)
                     timelimit = "m" if is_temporal else None
-                    text_results = list(ddgs.text(query, max_results=remaining, timelimit=timelimit))
+                    text_results = list(
+                        ddgs.text(query, max_results=remaining, timelimit=timelimit)
+                    )
                     offset = len(output_parts) + 1
                     for i, res in enumerate(text_results[:remaining], offset):
                         title = res.get("title", "No Title")
@@ -88,7 +109,9 @@ class DuckDuckGoSearchProvider(BaseSearchProvider):
                         output_parts.append(f"[{i}] {title}: {snippet}")
 
             formatted = "\n".join(output_parts)
-            return formatted if formatted.strip() else "No relevant search results found."
+            return (
+                formatted if formatted.strip() else "No relevant search results found."
+            )
 
         except Exception as e:
             logger.error(f"[DuckDuckGo Error] {e}")
@@ -106,16 +129,17 @@ class SerpAPISearchProvider(BaseSearchProvider):
 
         try:
             import httpx
-            logger.info(f"[SerpAPI / Google] Searching web for: {repr(query)}")
+
+            logger.info(f"[SerpAPI / Google] Searching web for: {query!r}")
             resp = httpx.get(
                 "https://serpapi.com/search",
                 params={
                     "q": query,
                     "api_key": self.api_key,
                     "engine": "google",
-                    "num": max_results
+                    "num": max_results,
                 },
-                timeout=10.0
+                timeout=10.0,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -125,7 +149,11 @@ class SerpAPISearchProvider(BaseSearchProvider):
             # 1. Answer Box / Knowledge Graph direct answer
             answer_box = data.get("answer_box", {})
             if answer_box:
-                ans = answer_box.get("answer") or answer_box.get("snippet") or answer_box.get("result")
+                ans = (
+                    answer_box.get("answer")
+                    or answer_box.get("snippet")
+                    or answer_box.get("result")
+                )
                 if ans:
                     output_parts.append(f"Google Direct Answer: {ans}")
 
@@ -144,7 +172,9 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 output_parts.append(f"[{i}] {title}: {snippet}")
 
             formatted = "\n".join(output_parts)
-            return formatted if formatted.strip() else "No relevant search results found."
+            return (
+                formatted if formatted.strip() else "No relevant search results found."
+            )
 
         except Exception as e:
             logger.error(f"[SerpAPI Error] {e}")
@@ -162,7 +192,9 @@ def get_search_provider(provider_name: str | None = None) -> BaseSearchProvider:
     elif provider_name in ("tavily", "tavily_search"):
         return TavilySearchProvider()
     else:
-        logger.warning(f"Unknown SEARCH_PROVIDER '{provider_name}'. Defaulting to DuckDuckGoSearchProvider.")
+        logger.warning(
+            f"Unknown SEARCH_PROVIDER '{provider_name}'. Defaulting to DuckDuckGoSearchProvider."
+        )
         return DuckDuckGoSearchProvider()
 
 

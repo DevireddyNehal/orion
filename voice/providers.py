@@ -1,32 +1,42 @@
-from abc import ABC, abstractmethod
 import asyncio
 import io
 import os
 import queue
 import threading
+from abc import ABC, abstractmethod
+from collections.abc import Generator
+from typing import Any
+
 import av
 import numpy as np
 from loguru import logger
-from typing import Any, Generator
+
 
 class BaseTTSProvider(ABC):
     @abstractmethod
-    def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
+    def synthesize(
+        self, text: str, speed: float = 1.0
+    ) -> Generator[np.ndarray, None, None]:
         """Yields float32 numpy audio arrays at target sample rate for sounddevice."""
-        pass
 
     def warmup(self):
         """Optional provider pre-warming."""
-        pass
 
 
 class KokoroTTSProvider(BaseTTSProvider):
-    def __init__(self, voice: str = "orion", lang_code: str | None = None, speed: float | None = None):
+    def __init__(
+        self,
+        voice: str = "orion",
+        lang_code: str | None = None,
+        speed: float | None = None,
+    ):
         from kokoro import KPipeline
 
         self.raw_voice_name = os.getenv("TTS_VOICE", voice)
         lang = os.getenv("TTS_LANG", lang_code)
-        self.speed = float(os.getenv("TTS_SPEED", str(speed if speed is not None else 1.0)))
+        self.speed = float(
+            os.getenv("TTS_SPEED", str(speed if speed is not None else 1.0))
+        )
 
         # Auto-detect language code if not explicitly set
         if not lang:
@@ -36,11 +46,17 @@ class KokoroTTSProvider(BaseTTSProvider):
             else:
                 lang = "a"
 
-        logger.info(f"[KokoroTTS] Initializing Kokoro Pipeline (lang='{lang}', speed={self.speed})...")
-        self.pipeline = KPipeline(lang_code=lang, repo_id="hexgrad/Kokoro-82M", device="cpu")
+        logger.info(
+            f"[KokoroTTS] Initializing Kokoro Pipeline (lang='{lang}', speed={self.speed})..."
+        )
+        self.pipeline = KPipeline(
+            lang_code=lang, repo_id="hexgrad/Kokoro-82M", device="cpu"
+        )
         self.sample_rate = 24000
         self.voice: Any = self._load_voice_or_blend(self.raw_voice_name)
-        logger.info(f"[KokoroTTS] Initialized with voice: {self.raw_voice_name} (speed={self.speed})")
+        logger.info(
+            f"[KokoroTTS] Initialized with voice: {self.raw_voice_name} (speed={self.speed})"
+        )
 
         # Warmup
         try:
@@ -69,7 +85,9 @@ class KokoroTTSProvider(BaseTTSProvider):
         }
 
         if voice_str.lower() in presets:
-            logger.info(f"[KokoroTTS] Using voice preset '{voice_str}' -> {presets[voice_str.lower()]}")
+            logger.info(
+                f"[KokoroTTS] Using voice preset '{voice_str}' -> {presets[voice_str.lower()]}"
+            )
             voice_str = presets[voice_str.lower()]
 
         if "+" in voice_str or "*" in voice_str:
@@ -91,7 +109,9 @@ class KokoroTTSProvider(BaseTTSProvider):
         else:
             return self.pipeline.load_voice(voice_str)
 
-    def _trim_silence_padding(self, audio: np.ndarray, threshold: float = 0.005, pad_samples: int = 360) -> np.ndarray:
+    def _trim_silence_padding(
+        self, audio: np.ndarray, threshold: float = 0.005, pad_samples: int = 360
+    ) -> np.ndarray:
         """Trims artificial dead silence padding while keeping a smooth ~15ms breath transition with soft edge tapers."""
         if len(audio) == 0:
             return audio
@@ -110,19 +130,26 @@ class KokoroTTSProvider(BaseTTSProvider):
 
         return trimmed
 
-    def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
+    def synthesize(
+        self, text: str, speed: float = 1.0
+    ) -> Generator[np.ndarray, None, None]:
         effective_speed = max(0.5, min(2.0, speed))
         audio_generator = self.pipeline(text, voice=self.voice, speed=effective_speed)  # type: ignore
         for _, _, audio in audio_generator:
             if audio is not None and len(audio) > 0:
-                trimmed = self._trim_silence_padding(np.asarray(audio, dtype=np.float32))
+                trimmed = self._trim_silence_padding(
+                    np.asarray(audio, dtype=np.float32)
+                )
                 if len(trimmed) > 0:
                     yield trimmed
 
 
 class EdgeTTSProvider(BaseTTSProvider):
-    def __init__(self, voice: str = "en-US-EmmaNeural", target_sample_rate: int = 24000):
+    def __init__(
+        self, voice: str = "en-US-EmmaNeural", target_sample_rate: int = 24000
+    ):
         import edge_tts
+
         self.edge_tts = edge_tts
         self.voice = os.getenv("TTS_VOICE", voice)
         self.sample_rate = target_sample_rate
@@ -132,7 +159,9 @@ class EdgeTTSProvider(BaseTTSProvider):
         self.loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
         self.loop_thread.start()
 
-        logger.info(f"[EdgeTTS] Initialized with voice: {self.voice} and persistent async loop")
+        logger.info(
+            f"[EdgeTTS] Initialized with voice: {self.voice} and persistent async loop"
+        )
 
     def _run_event_loop(self):
         asyncio.set_event_loop(self.loop)
@@ -142,14 +171,12 @@ class EdgeTTSProvider(BaseTTSProvider):
         if not mp3_bytes:
             return np.array([], dtype=np.float32)
         try:
-            container = av.open(io.BytesIO(mp3_bytes), mode='r')
+            container = av.open(io.BytesIO(mp3_bytes), mode="r")
             if not container.streams.audio:
                 return np.array([], dtype=np.float32)
             stream = container.streams.audio[0]
             resampler = av.AudioResampler(
-                format='flt',
-                layout='mono',
-                rate=self.sample_rate
+                format="flt", layout="mono", rate=self.sample_rate
             )
             samples = []
             for frame in container.decode(stream):
@@ -171,7 +198,9 @@ class EdgeTTSProvider(BaseTTSProvider):
             logger.error(f"[EdgeTTS] MP3 decode error: {e}")
             return np.array([], dtype=np.float32)
 
-    async def _async_synthesize(self, text: str, out_queue: queue.Queue, speed: float = 1.0):
+    async def _async_synthesize(
+        self, text: str, out_queue: queue.Queue, speed: float = 1.0
+    ):
         try:
             rate_pct = round((speed - 1.0) * 100)
             rate_str = f"{rate_pct:+d}%" if rate_pct != 0 else "+0%"
@@ -190,14 +219,15 @@ class EdgeTTSProvider(BaseTTSProvider):
         finally:
             out_queue.put(None)
 
-    def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
+    def synthesize(
+        self, text: str, speed: float = 1.0
+    ) -> Generator[np.ndarray, None, None]:
         if not text or not text.strip():
             return
 
         out_queue = queue.Queue()
         asyncio.run_coroutine_threadsafe(
-            self._async_synthesize(text, out_queue, speed=speed),
-            self.loop
+            self._async_synthesize(text, out_queue, speed=speed), self.loop
         )
 
         while True:
@@ -212,7 +242,9 @@ class PiperTTSProvider(BaseTTSProvider):
         from piper import PiperVoice
         from piper.config import SynthesisConfig
 
-        self.model_path = model_path or os.getenv("PIPER_MODEL_PATH") or os.getenv("TTS_VOICE") or ""
+        self.model_path = (
+            model_path or os.getenv("PIPER_MODEL_PATH") or os.getenv("TTS_VOICE") or ""
+        )
 
         if not self.model_path:
             raise ValueError(
@@ -258,11 +290,14 @@ class PiperTTSProvider(BaseTTSProvider):
             f"length_scale={length_scale}, noise_scale={noise_scale}, noise_w_scale={noise_w_scale})"
         )
 
-    def synthesize(self, text: str, speed: float = 1.0) -> Generator[np.ndarray, None, None]:
+    def synthesize(
+        self, text: str, speed: float = 1.0
+    ) -> Generator[np.ndarray, None, None]:
         if not text or not text.strip():
             return
 
         from piper.config import SynthesisConfig
+
         base_length_scale = float(os.getenv("PIPER_LENGTH_SCALE", "1.0"))
         scaled_length_scale = base_length_scale / max(0.5, speed)
 
@@ -281,7 +316,7 @@ def get_tts_provider(provider_name: str | None = None) -> BaseTTSProvider:
     if not provider_name:
         provider_name = os.getenv("TTS_PROVIDER", "edge_tts")
     provider_name = provider_name.lower().strip()
-    
+
     if provider_name in ("edge", "edge_tts", "edgetts"):
         return EdgeTTSProvider()
     elif provider_name in ("kokoro", "local"):
@@ -289,6 +324,7 @@ def get_tts_provider(provider_name: str | None = None) -> BaseTTSProvider:
     elif provider_name in ("piper", "piper_tts", "pipertts"):
         return PiperTTSProvider()
     else:
-        logger.warning(f"Unknown TTS_PROVIDER '{provider_name}'. Defaulting to EdgeTTSProvider.")
+        logger.warning(
+            f"Unknown TTS_PROVIDER '{provider_name}'. Defaulting to EdgeTTSProvider."
+        )
         return EdgeTTSProvider()
-

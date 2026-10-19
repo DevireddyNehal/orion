@@ -1,19 +1,36 @@
 import re
-import uuid
 import threading
+import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, Callable
+from typing import Any
+
 from loguru import logger
 
 WORD_TO_NUMBER = {
-    'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
-    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
-    'eleven': 11, 'twelve': 12, 'fifteen': 15, 'twenty': 20,
-    'thirty': 30, 'forty-five': 45, 'a': 1, 'an': 1
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "fifteen": 15,
+    "twenty": 20,
+    "thirty": 30,
+    "forty-five": 45,
+    "a": 1,
+    "an": 1,
 }
 
 
-def parse_reminder_delay(time_str: str = "", delay_seconds: Optional[float] = None) -> float:
+def parse_reminder_delay(
+    time_str: str = "", delay_seconds: float | None = None
+) -> float:
     """
     Parses natural duration expressions or clock times into total seconds.
     Examples:
@@ -33,8 +50,8 @@ def parse_reminder_delay(time_str: str = "", delay_seconds: Optional[float] = No
 
     # 1. Look for relative duration (e.g. 'in 5 minutes', '30 seconds', '2 hours', 'in 10 sec')
     dur_match = re.search(
-        r'(?:in\s+)?(\w+)\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|h|m|s)\b',
-        text
+        r"(?:in\s+)?(\w+)\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|h|m|s)\b",
+        text,
     )
     if dur_match:
         val_str = dur_match.group(1)
@@ -47,23 +64,23 @@ def parse_reminder_delay(time_str: str = "", delay_seconds: Optional[float] = No
         else:
             amount = 1.0
 
-        if unit in ('sec', 'secs', 'second', 'seconds', 's'):
+        if unit in ("sec", "secs", "second", "seconds", "s"):
             return max(1.0, amount)
-        elif unit in ('min', 'mins', 'minute', 'minutes', 'm'):
+        elif unit in ("min", "mins", "minute", "minutes", "m"):
             return max(1.0, amount * 60.0)
-        elif unit in ('hr', 'hrs', 'hour', 'hours', 'h'):
+        elif unit in ("hr", "hrs", "hour", "hours", "h"):
             return max(1.0, amount * 3600.0)
 
     # 2. HH:MM AM/PM or HH:MM clock time
-    clock_match = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', text)
+    clock_match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", text)
     if clock_match:
         hour = int(clock_match.group(1))
         minute = int(clock_match.group(2)) if clock_match.group(2) else 0
         meridiem = clock_match.group(3)
 
-        if meridiem == 'pm' and hour < 12:
+        if meridiem == "pm" and hour < 12:
             hour += 12
-        elif meridiem == 'am' and hour == 12:
+        elif meridiem == "am" and hour == 12:
             hour = 0
 
         if 0 <= hour <= 23 and 0 <= minute <= 59:
@@ -83,7 +100,7 @@ def format_duration(seconds: float) -> str:
     total_sec = round(seconds)
     if total_sec < 60:
         return f"{total_sec} second{'s' if total_sec != 1 else ''}"
-    
+
     hours = total_sec // 3600
     minutes = (total_sec % 3600) // 60
     secs = total_sec % 60
@@ -101,7 +118,7 @@ def format_duration(seconds: float) -> str:
 
 class ReminderManager:
     def __init__(self):
-        self.reminders: Dict[str, Dict[str, Any]] = {}
+        self.reminders: dict[str, dict[str, Any]] = {}
         self.tts: Any = None
         self._lock = threading.Lock()
 
@@ -109,7 +126,9 @@ class ReminderManager:
         """Sets the TTS instance used to speak reminders out loud."""
         self.tts = tts
 
-    def set_reminder(self, message: str, time_str: str = "", delay_seconds: Optional[float] = None) -> str:
+    def set_reminder(
+        self, message: str, time_str: str = "", delay_seconds: float | None = None
+    ) -> str:
         """Sets a background internal timer reminder."""
         if not message or not message.strip():
             return "Error: Reminder message cannot be empty."
@@ -136,13 +155,15 @@ class ReminderManager:
                 "target_time": target_time,
                 "delay_seconds": delay,
                 "timer": timer,
-                "active": True
+                "active": True,
             }
             timer.start()
 
         target_str = target_time.strftime("%I:%M:%S %p").lstrip("0")
         dur_str = format_duration(delay)
-        logger.info(f"[Reminder Set] ID: {reminder_id} | '{clean_message}' in {dur_str} (Target: {target_str})")
+        logger.info(
+            f"[Reminder Set] ID: {reminder_id} | '{clean_message}' in {dur_str} (Target: {target_str})"
+        )
         return f"Reminder set: '{clean_message}' in {dur_str} (at {target_str})."
 
     def _on_reminder_expire(self, reminder_id: str):
@@ -167,7 +188,9 @@ class ReminderManager:
             except Exception as e:
                 logger.error(f"[Reminder TTS Error] Failed to speak reminder: {e}")
         else:
-            logger.warning(f"[Reminder] TTS engine not connected. Reminder text: '{spoken_text}'")
+            logger.warning(
+                f"[Reminder] TTS engine not connected. Reminder text: '{spoken_text}'"
+            )
 
     def list_reminders(self) -> str:
         """Lists all active pending internal reminders."""
@@ -200,12 +223,13 @@ class ReminderManager:
 
         with self._lock:
             for r_id, r in self.reminders.items():
-                if r["active"]:
-                    if query == r_id.lower() or query in r["message"].lower():
-                        r["active"] = False
-                        r["timer"].cancel()
-                        cancelled_item = r
-                        break
+                if r["active"] and (
+                    query == r_id.lower() or query in r["message"].lower()
+                ):
+                    r["active"] = False
+                    r["timer"].cancel()
+                    cancelled_item = r
+                    break
 
         if cancelled_item:
             msg = cancelled_item["message"]
@@ -220,9 +244,13 @@ class ReminderManager:
 reminder_manager = ReminderManager()
 
 
-def set_reminder(message: str, time_str: str = "", delay_seconds: Optional[float] = None) -> str:
+def set_reminder(
+    message: str, time_str: str = "", delay_seconds: float | None = None
+) -> str:
     """Public tool wrapper to set an internal reminder timer."""
-    return reminder_manager.set_reminder(message=message, time_str=time_str, delay_seconds=delay_seconds)
+    return reminder_manager.set_reminder(
+        message=message, time_str=time_str, delay_seconds=delay_seconds
+    )
 
 
 def list_reminders() -> str:

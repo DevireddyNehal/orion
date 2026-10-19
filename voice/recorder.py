@@ -1,6 +1,7 @@
 import selectors
 import threading
 import time
+from collections.abc import Callable
 from threading import Event
 
 import loguru
@@ -8,13 +9,10 @@ import numpy as np
 import sounddevice as sd
 from evdev import InputDevice, KeyEvent, categorize, ecodes, list_devices
 
-from typing import Callable
-
 logger = loguru.logger
 
 
 class AudioRecorder:
-
     def __init__(self, samplerate=16000, channels=1):
         self.samplerate = samplerate
         self.channels = channels
@@ -34,7 +32,6 @@ class AudioRecorder:
         """Registers a callback function to be called immediately when the record/interrupt key is pressed."""
         if callback not in self.on_press_callbacks:
             self.on_press_callbacks.append(callback)
-
 
     def record(self) -> tuple[bytes, float]:
         chunks = []
@@ -96,9 +93,7 @@ class AudioRecorder:
                 "No hardware keyboards matched filter criteria. Falling back to global search."
             )
             return (
-                ["/dev/input/event4"]
-                if "/dev/input/event4" in list_devices()
-                else []
+                ["/dev/input/event4"] if "/dev/input/event4" in list_devices() else []
             )
 
         logger.info(
@@ -116,9 +111,7 @@ class AudioRecorder:
                 selector.register(device, selectors.EVENT_READ)
                 logger.info(f"Successfully listening to device: {device.name}")
             except Exception as e:
-                logger.debug(
-                    f"Bypassing locked or unreadable device path {path}: {e}"
-                )
+                logger.debug(f"Bypassing locked or unreadable device path {path}: {e}")
 
         if not selector.get_map():
             logger.critical(
@@ -155,7 +148,9 @@ class AudioRecorder:
                                         try:
                                             cb()
                                         except Exception as cb_err:
-                                            logger.error(f"Callback error on press: {cb_err}")
+                                            logger.error(
+                                                f"Callback error on press: {cb_err}"
+                                            )
 
                                     if not self.record_event.is_set():
                                         self.record_event.set()

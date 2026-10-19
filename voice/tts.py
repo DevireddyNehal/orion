@@ -1,39 +1,81 @@
-import re
 import queue
-import time
+import re
 import threading
+import time
+from time import perf_counter
+
 import numpy as np
 import sounddevice as sd
-from time import perf_counter
 from loguru import logger
+
 from voice.providers import BaseTTSProvider, get_tts_provider
 
 EMOJI_PATTERN = re.compile(
     "["
-    "\U0001F600-\U0001F64F"  # emoticons
-    "\U0001F300-\U0001F5FF"  # symbols & pictographs
-    "\U0001F680-\U0001F6FF"  # transport & map symbols
-    "\U0001F1E0-\U0001F1FF"  # flags
-    "\U00002702-\U000027B0"
-    "\U000024C2-\U0001F251"
-    "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
-    "\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
-    "\U00002600-\U000026FF"  # Miscellaneous Symbols
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f300-\U0001f5ff"  # symbols & pictographs
+    "\U0001f680-\U0001f6ff"  # transport & map symbols
+    "\U0001f1e0-\U0001f1ff"  # flags
+    "\U00002702-\U000027b0"
+    "\U000024c2-\U0001f251"
+    "\U0001f900-\U0001f9ff"  # Supplemental Symbols and Pictographs
+    "\U0001fa70-\U0001faff"  # Symbols and Pictographs Extended-A
+    "\U00002600-\U000026ff"  # Miscellaneous Symbols
     "]+",
     flags=re.UNICODE,
 )
 
 
 ABBREVIATIONS = {
-    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "vs", "etc", "eg", "ie",
-    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
-    "st", "ave", "rd", "blvd", "dept", "approx", "no", "vol"
+    "mr",
+    "mrs",
+    "ms",
+    "dr",
+    "prof",
+    "sr",
+    "jr",
+    "vs",
+    "etc",
+    "eg",
+    "ie",
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+    "st",
+    "ave",
+    "rd",
+    "blvd",
+    "dept",
+    "approx",
+    "no",
+    "vol",
 }
 
 # Major coordinating conjunctions and clause transitions for natural sub-sentence splitting
 CLAUSE_CONJUNCTIONS = (
-    "and", "but", "or", "so", "yet", "because", "since", "although",
-    "while", "however", "though", "which", "where", "when", "as"
+    "and",
+    "but",
+    "or",
+    "so",
+    "yet",
+    "because",
+    "since",
+    "although",
+    "while",
+    "however",
+    "though",
+    "which",
+    "where",
+    "when",
+    "as",
 )
 
 
@@ -49,43 +91,45 @@ def clean_text_for_tts(text: str) -> str:
     text = EMOJI_PATTERN.sub("", text)
 
     # 2. Strip LaTeX math expressions (e.g. \(...\), \[...\], \G\mu\nu, \pi, etc.)
-    text = re.sub(r'\\\([^)]*\\\)', '', text)
-    text = re.sub(r'\\\[[^\]]*\\\]', '', text)
-    text = re.sub(r'\\[a-zA-Z]+', '', text)
+    text = re.sub(r"\\\([^)]*\\\)", "", text)
+    text = re.sub(r"\\\[[^\]]*\\\]", "", text)
+    text = re.sub(r"\\[a-zA-Z]+", "", text)
 
     # 3. Convert markdown links [title](url) to just title
-    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
 
     # 4. Strip leading list bullets, hyphens, numbers at start of line/sentence (e.g. "- ", "* ", "1. ", "• ")
-    text = re.sub(r'^\s*[-*•]\s+', '', text)
-    text = re.sub(r'^\s*\d+[\.\)]\s+', '', text)
-    text = re.sub(r'(?<=\s)[-*•]\s+', '', text)
+    text = re.sub(r"^\s*[-*•]\s+", "", text)
+    text = re.sub(r"^\s*\d+[\.\)]\s+", "", text)
+    text = re.sub(r"(?<=\s)[-*•]\s+", "", text)
 
     # 5. Strip bold, italics, code blocks, headers: *, _, #, `, ~, >
-    text = re.sub(r'[*_#`~>]+', '', text)
+    text = re.sub(r"[*_#`~>]+", "", text)
 
     # 6. Convert em-dashes, en-dashes, and double hyphens into natural short comma pauses
-    text = re.sub(r'[—–]|--', ', ', text)
+    text = re.sub(r"[—–]|--", ", ", text)
 
     # 7. Remove quotes, backslashes, parentheses, brackets, and math dollar signs
-    text = re.sub(r'[\(\)\[\]\{\}"\$\\]', '', text)
-    text = re.sub(r"(?<!\w)'|'(?!\w)", '', text)
+    text = re.sub(r'[\(\)\[\]\{\}"\$\\]', "", text)
+    text = re.sub(r"(?<!\w)'|'(?!\w)", "", text)
 
     # 8. Normalize colons / semicolons that aren't inside numbers or timestamps (e.g. 10:30)
-    text = re.sub(r'(?<!\d)[:;](?!\d)', ', ', text)
+    text = re.sub(r"(?<!\d)[:;](?!\d)", ", ", text)
 
     # 9. Normalize spaces and newlines into single spaces
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"\s+", " ", text)
 
     # 10. Clean up leading comma/punctuation or double punctuation (e.g. ", ," or ", .")
-    text = re.sub(r'^[\s,]+', '', text)
-    text = re.sub(r',\s*,+', ', ', text)
-    text = re.sub(r',\s*\.', '.', text)
+    text = re.sub(r"^[\s,]+", "", text)
+    text = re.sub(r",\s*,+", ", ", text)
+    text = re.sub(r",\s*\.", ".", text)
 
     return text.strip()
 
 
-def find_sentence_split_point(buffer: str, is_first_chunk: bool = False, buffered_duration: float = 0.0) -> int:
+def find_sentence_split_point(
+    buffer: str, is_first_chunk: bool = False, buffered_duration: float = 0.0
+) -> int:
     """
     Finds natural sentence and clause split points for streaming TTS.
     - If is_first_chunk is True: splits at the earliest natural punctuation boundary (>= 3 words)
@@ -103,22 +147,26 @@ def find_sentence_split_point(buffer: str, is_first_chunk: bool = False, buffere
     word_count = len(words)
 
     # 1. Complete sentence boundaries (. ! ? or newline) are ALWAYS preferred for full prosody
-    sentence_matches = list(re.finditer(r'([\.!\?\n])(?:\s+|$)', buffer))
+    sentence_matches = list(re.finditer(r"([\.!\?\n])(?:\s+|$)", buffer))
     for m in sentence_matches:
         punct_idx = m.start(1)
         punct_char = buffer[punct_idx]
 
         # Guard against false sentence endings
-        if punct_char == '.':
+        if punct_char == ".":
             # Check for decimals (e.g. 3.14, 72.5)
-            if punct_idx > 0 and punct_idx + 1 < len(buffer):
-                if buffer[punct_idx - 1].isdigit() and buffer[punct_idx + 1].isdigit():
-                    continue
+            if (
+                punct_idx > 0
+                and punct_idx + 1 < len(buffer)
+                and buffer[punct_idx - 1].isdigit()
+                and buffer[punct_idx + 1].isdigit()
+            ):
+                continue
 
             # Check for abbreviations (e.g. Dr. Watson, Jan. 15, etc.)
             preceding_text = buffer[:punct_idx].rstrip()
             last_token = preceding_text.split()[-1] if preceding_text.split() else ""
-            cleaned_token = re.sub(r'^[^\w]+|[^\w]+$', '', last_token).lower()
+            cleaned_token = re.sub(r"^[^\w]+|[^\w]+$", "", last_token).lower()
             if cleaned_token in ABBREVIATIONS:
                 continue
             # Single capital letter (e.g. middle initial "A.")
@@ -127,7 +175,7 @@ def find_sentence_split_point(buffer: str, is_first_chunk: bool = False, buffere
 
         # For the first chunk, avoid splitting off tiny 1-2 word sentences mid-stream (e.g. "Wait.")
         # unless more context is available, to avoid queue starvation.
-        if is_first_chunk and len(buffer[:m.end()].split()) < 3:
+        if is_first_chunk and len(buffer[: m.end()].split()) < 3:
             continue
 
         return m.end()
@@ -137,18 +185,22 @@ def find_sentence_split_point(buffer: str, is_first_chunk: bool = False, buffere
     # NEVER split on short conversational openers like "Good day,", "Well,", "Sure,", "Yes,".
     if is_first_chunk:
         if word_count >= 6:
-            early_match = re.search(r'([,;:—–\n]|\s+--\s+)(?:\s+|$)', buffer)
+            early_match = re.search(r"([,;:—–\n]|\s+--\s+)(?:\s+|$)", buffer)
             if early_match:
-                pre_text = buffer[:early_match.start(1)].strip()
+                pre_text = buffer[: early_match.start(1)].strip()
                 if len(pre_text.split()) >= 5:
                     return early_match.end()
         # If no punctuation at all and reached 10+ words, split at a natural boundary to avoid stalling TTFA
         if word_count >= 10:
-            conj_match = re.search(r'(\s+(?:' + '|'.join(CLAUSE_CONJUNCTIONS) + r')\b)', buffer, flags=re.IGNORECASE)
-            if conj_match and len(buffer[:conj_match.start()].strip().split()) >= 5:
+            conj_match = re.search(
+                r"(\s+(?:" + "|".join(CLAUSE_CONJUNCTIONS) + r")\b)",
+                buffer,
+                flags=re.IGNORECASE,
+            )
+            if conj_match and len(buffer[: conj_match.start()].strip().split()) >= 5:
                 return conj_match.start() + 1
-            for cm in re.finditer(r'\s+', buffer):
-                pre_seg = buffer[:cm.start()].strip()
+            for cm in re.finditer(r"\s+", buffer):
+                pre_seg = buffer[: cm.start()].strip()
                 if len(pre_seg.split()) >= 7:
                     return cm.end()
 
@@ -157,19 +209,21 @@ def find_sentence_split_point(buffer: str, is_first_chunk: bool = False, buffere
     # Complete sentences (. ! ? \n) handled above provide optimal prosody and synthesis speed.
     # Only split on clause breaks if a single sentence is an extreme run-on (>= 25 words) with no period.
     if word_count >= 25:
-        for cm in re.finditer(r'([,;:—–]|\s+--\s+)(?:\s+|$)', buffer):
-            pre_seg = buffer[:cm.start(1)].strip()
+        for cm in re.finditer(r"([,;:—–]|\s+--\s+)(?:\s+|$)", buffer):
+            pre_seg = buffer[: cm.start(1)].strip()
             n_words = len(pre_seg.split())
             if n_words >= 15:
                 return cm.end()
 
     # 4. Extreme run-on fallback with zero punctuation (>= 30 words)
     if word_count >= 30:
-        conjunction_pattern = r'(\s+(?:' + '|'.join(CLAUSE_CONJUNCTIONS) + r')\b)'
-        conj_matches = list(re.finditer(conjunction_pattern, buffer, flags=re.IGNORECASE))
+        conjunction_pattern = r"(\s+(?:" + "|".join(CLAUSE_CONJUNCTIONS) + r")\b)"
+        conj_matches = list(
+            re.finditer(conjunction_pattern, buffer, flags=re.IGNORECASE)
+        )
         if conj_matches:
             for cm in conj_matches:
-                pre_seg = buffer[:cm.start()].strip()
+                pre_seg = buffer[: cm.start()].strip()
                 if len(pre_seg.split()) >= 15:
                     return cm.start() + 1
 
@@ -177,10 +231,25 @@ def find_sentence_split_point(buffer: str, is_first_chunk: bool = False, buffere
 
 
 EXPLANATORY_KEYWORDS = {
-    "relativity", "quantum", "physics", "equation", "formula", "theorem",
-    "architecture", "algorithm", "mechanism", "hypothesis", "principle",
-    "thermodynamics", "philosophy", "electromagnetism", "gravitational",
-    "differentiation", "integration", "astrophysics", "neuroscience"
+    "relativity",
+    "quantum",
+    "physics",
+    "equation",
+    "formula",
+    "theorem",
+    "architecture",
+    "algorithm",
+    "mechanism",
+    "hypothesis",
+    "principle",
+    "thermodynamics",
+    "philosophy",
+    "electromagnetism",
+    "gravitational",
+    "differentiation",
+    "integration",
+    "astrophysics",
+    "neuroscience",
 }
 
 
@@ -221,14 +290,19 @@ class TextToSpeech:
     Decoupled general TTS Audio Playback & Streaming Engine.
     Handles text cleaning, full sentence prosody, dynamic pacing, and background playback.
     """
-    def __init__(self, provider: BaseTTSProvider | None = None, sample_rate: int = 24000):
+
+    def __init__(
+        self, provider: BaseTTSProvider | None = None, sample_rate: int = 24000
+    ):
         t0 = perf_counter()
         if provider is None:
             self.provider = get_tts_provider()
         else:
             self.provider = provider
 
-        logger.info(f"[TTS Engine] Initialized using provider: {self.provider.__class__.__name__} in {perf_counter() - t0:.2f}s")
+        logger.info(
+            f"[TTS Engine] Initialized using provider: {self.provider.__class__.__name__} in {perf_counter() - t0:.2f}s"
+        )
 
         self.sample_rate = getattr(self.provider, "sample_rate", sample_rate)
         self.interrupt_event = threading.Event()
@@ -249,7 +323,9 @@ class TextToSpeech:
         self.tts_queue = queue.Queue()
 
         # Dedicated background worker for provider synthesis
-        self.worker_thread = threading.Thread(target=self._synthesis_worker, daemon=True)
+        self.worker_thread = threading.Thread(
+            target=self._synthesis_worker, daemon=True
+        )
         self.worker_thread.start()
 
         # Non-blocking background audio output stream
@@ -257,7 +333,7 @@ class TextToSpeech:
             samplerate=self.sample_rate,
             channels=1,
             callback=self._audio_callback,
-            dtype='float32'
+            dtype="float32",
         )
         self.stream.start()
 
@@ -288,7 +364,9 @@ class TextToSpeech:
             self.playback_started_gen_id = -1
             self.first_audio_arrival_time = None
 
-        logger.info(f"[TTS] Interrupted! Epoch advanced to {self.current_generation_id} and queues flushed.")
+        logger.info(
+            f"[TTS] Interrupted! Epoch advanced to {self.current_generation_id} and queues flushed."
+        )
 
     def is_interrupted(self) -> bool:
         return self.interrupt_event.is_set()
@@ -330,8 +408,13 @@ class TextToSpeech:
                 else:
                     text, speed, gen_id = item, 1.0, self.current_generation_id
 
-                if gen_id != self.current_generation_id or self.interrupt_event.is_set():
-                    logger.info(f"[Worker] Skipping stale task for gen {gen_id} (current={self.current_generation_id})")
+                if (
+                    gen_id != self.current_generation_id
+                    or self.interrupt_event.is_set()
+                ):
+                    logger.info(
+                        f"[Worker] Skipping stale task for gen {gen_id} (current={self.current_generation_id})"
+                    )
                     self.tts_queue.task_done()
                     continue
 
@@ -379,9 +462,12 @@ class TextToSpeech:
 
         # 1. Use leftover audio from previous callback (validate generation)
         if self.remainder is not None and len(self.remainder) > 0:
-            if self.remainder_gen_id == self.current_generation_id and not self.interrupt_event.is_set():
+            if (
+                self.remainder_gen_id == self.current_generation_id
+                and not self.interrupt_event.is_set()
+            ):
                 take = min(needed - filled, len(self.remainder))
-                out_buf[filled:filled + take] = self.remainder[:take]
+                out_buf[filled : filled + take] = self.remainder[:take]
                 self.remainder = self.remainder[take:]
                 filled += take
             else:
@@ -410,11 +496,13 @@ class TextToSpeech:
 
             if self.starvation_start is not None:
                 duration = time.time() - self.starvation_start
-                logger.info(f"[AUDIO] Audio resumed. Starved for {duration:.3f} seconds")
+                logger.info(
+                    f"[AUDIO] Audio resumed. Starved for {duration:.3f} seconds"
+                )
                 self.starvation_start = None
 
             take = min(needed - filled, len(data))
-            out_buf[filled:filled + take] = data[:take]
+            out_buf[filled : filled + take] = data[:take]
             filled += take
 
             if take < len(data):
@@ -453,21 +541,26 @@ class TextToSpeech:
 
         for text_chunk, _ in llm_generator:
             if gen_id != self.current_generation_id or self.interrupt_event.is_set():
-                logger.info(f"[TTS] Interrupted during LLM token stream for gen {gen_id}.")
+                logger.info(
+                    f"[TTS] Interrupted during LLM token stream for gen {gen_id}."
+                )
                 break
 
-            logger.info(f"Received: {repr(text_chunk)}")
+            logger.info(f"Received: {text_chunk!r}")
             raw_buffer += text_chunk
 
             while True:
-                if gen_id != self.current_generation_id or self.interrupt_event.is_set():
+                if (
+                    gen_id != self.current_generation_id
+                    or self.interrupt_event.is_set()
+                ):
                     break
 
                 buffered_sec = self.get_buffered_duration()
                 split_idx = find_sentence_split_point(
                     raw_buffer,
                     is_first_chunk=is_first_chunk,
-                    buffered_duration=buffered_sec
+                    buffered_duration=buffered_sec,
                 )
 
                 if split_idx == -1:
@@ -480,12 +573,16 @@ class TextToSpeech:
                 if clean_sentence and any(c.isalnum() for c in clean_sentence):
                     is_first_chunk = False
                     sentence_pacing = determine_sentence_pacing(clean_sentence)
-                    
-                    if sentence_pacing <= 0.95 or any(kw in clean_sentence.lower() for kw in EXPLANATORY_KEYWORDS):
+
+                    if sentence_pacing <= 0.95 or any(
+                        kw in clean_sentence.lower() for kw in EXPLANATORY_KEYWORDS
+                    ):
                         is_explanation_mode = True
 
                     speed = 0.95 if is_explanation_mode else sentence_pacing
-                    logger.info(f"QUEUE >>> {clean_sentence} (speed={speed:.2f}x, gen={gen_id})")
+                    logger.info(
+                        f"QUEUE >>> {clean_sentence} (speed={speed:.2f}x, gen={gen_id})"
+                    )
                     self.tts_queue.put((clean_sentence, speed, gen_id))
 
         if gen_id != self.current_generation_id or self.interrupt_event.is_set():
@@ -496,39 +593,60 @@ class TextToSpeech:
             clean_sentence = clean_text_for_tts(raw_buffer)
             if clean_sentence and any(c.isalnum() for c in clean_sentence):
                 sentence_pacing = determine_sentence_pacing(clean_sentence)
-                if sentence_pacing <= 0.95 or any(kw in clean_sentence.lower() for kw in EXPLANATORY_KEYWORDS):
+                if sentence_pacing <= 0.95 or any(
+                    kw in clean_sentence.lower() for kw in EXPLANATORY_KEYWORDS
+                ):
                     is_explanation_mode = True
                 speed = 0.95 if is_explanation_mode else sentence_pacing
-                logger.info(f"QUEUE (FINAL) >>> {clean_sentence} (speed={speed:.2f}x, gen={gen_id})")
+                logger.info(
+                    f"QUEUE (FINAL) >>> {clean_sentence} (speed={speed:.2f}x, gen={gen_id})"
+                )
                 self.tts_queue.put((clean_sentence, speed, gen_id))
 
-    def _synthesize_to_queue(self, text: str, speed: float = 1.0, gen_id: int | None = None):
+    def _synthesize_to_queue(
+        self, text: str, speed: float = 1.0, gen_id: int | None = None
+    ):
         """Delegates synthesis to provider and pushes float32 PCM audio chunks to playback queue."""
         if gen_id is None:
             gen_id = self.current_generation_id
 
-        logger.info(f"[SYNTH] START: {repr(text)} (speed={speed:.2f}x, gen={gen_id})")
+        logger.info(f"[SYNTH] START: {text!r} (speed={speed:.2f}x, gen={gen_id})")
         try:
             t0 = time.time()
             chunk_count = 0
             first_audio = True
 
             for audio_data in self.provider.synthesize(text, speed=speed):
-                if gen_id != self.current_generation_id or self.interrupt_event.is_set():
-                    logger.info(f"[SYNTH] Stale synthesis discarded for gen {gen_id} (current={self.current_generation_id}).")
+                if (
+                    gen_id != self.current_generation_id
+                    or self.interrupt_event.is_set()
+                ):
+                    logger.info(
+                        f"[SYNTH] Stale synthesis discarded for gen {gen_id} (current={self.current_generation_id})."
+                    )
                     break
 
                 chunk_count += 1
                 if first_audio:
-                    logger.info(f"[SYNTH] FIRST AUDIO CHUNK after {time.time() - t0:.3f}s (gen={gen_id})")
+                    logger.info(
+                        f"[SYNTH] FIRST AUDIO CHUNK after {time.time() - t0:.3f}s (gen={gen_id})"
+                    )
                     first_audio = False
 
-                if audio_data is not None and len(audio_data) > 0:
-                    if gen_id == self.current_generation_id and not self.interrupt_event.is_set():
-                        logger.info(f"[SYNTH] Queueing chunk #{chunk_count} ({len(audio_data)} samples, gen={gen_id})")
-                        self.audio_queue.put((audio_data, gen_id))
+                if (
+                    audio_data is not None
+                    and len(audio_data) > 0
+                    and gen_id == self.current_generation_id
+                    and not self.interrupt_event.is_set()
+                ):
+                    logger.info(
+                        f"[SYNTH] Queueing chunk #{chunk_count} ({len(audio_data)} samples, gen={gen_id})"
+                    )
+                    self.audio_queue.put((audio_data, gen_id))
 
-            logger.info(f"[SYNTH] DONE after {time.time() - t0:.3f}s ({chunk_count} chunks, gen={gen_id})")
+            logger.info(
+                f"[SYNTH] DONE after {time.time() - t0:.3f}s ({chunk_count} chunks, gen={gen_id})"
+            )
 
         except Exception as e:
             logger.exception(f"[SYNTH ERROR] {e}")
@@ -542,7 +660,9 @@ class TextToSpeech:
                 gen_id = self.current_generation_id
                 self.playback_started_gen_id = -1
                 self.first_audio_arrival_time = None
-            logger.info(f"[TTS] Direct speak text queued: '{clean}' (speed={speed:.2f}x, gen={gen_id})")
+            logger.info(
+                f"[TTS] Direct speak text queued: '{clean}' (speed={speed:.2f}x, gen={gen_id})"
+            )
             self.tts_queue.put((clean, speed, gen_id))
 
     def close(self):

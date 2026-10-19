@@ -1,20 +1,23 @@
 import inspect
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
+
 from loguru import logger
-from .web_search import web_search
+
 from .gnome_clock import (
-    set_gnome_alarm,
-    list_gnome_alarms,
     delete_gnome_alarm,
+    list_gnome_alarms,
+    set_gnome_alarm,
     set_gnome_timer,
 )
 from .reminders import (
-    set_reminder,
-    list_reminders,
     cancel_reminder,
+    list_reminders,
+    set_reminder,
 )
+from .web_search import web_search
 
-TOOLS: Dict[str, Callable[..., Any]] = {
+TOOLS: dict[str, Callable[..., Any]] = {
     "web_search": web_search,
     "set_gnome_alarm": set_gnome_alarm,
     "list_gnome_alarms": list_gnome_alarms,
@@ -25,7 +28,7 @@ TOOLS: Dict[str, Callable[..., Any]] = {
     "cancel_reminder": cancel_reminder,
 }
 
-AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
+AVAILABLE_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -36,15 +39,15 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The search query string."
+                        "description": "The search query string.",
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Optional number of search results to return (default: 3, max: 10)."
-                    }
-                }
-            }
-        }
+                        "description": "Optional number of search results to return (default: 3, max: 10).",
+                    },
+                },
+            },
+        },
     },
     {
         "type": "function",
@@ -56,31 +59,28 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "properties": {
                     "time_str": {
                         "type": "string",
-                        "description": "The alarm time expression (e.g., '7:30 AM', '19:45', 'in 20 minutes')."
+                        "description": "The alarm time expression (e.g., '7:30 AM', '19:45', 'in 20 minutes').",
                     },
                     "name": {
                         "type": "string",
-                        "description": "Optional label or description for the alarm (e.g., 'Morning Workout', 'Team Sync')."
+                        "description": "Optional label or description for the alarm (e.g., 'Morning Workout', 'Team Sync').",
                     },
                     "sound": {
                         "type": "string",
-                        "description": "Alarm sound name. Default is 'sonar'."
-                    }
+                        "description": "Alarm sound name. Default is 'sonar'.",
+                    },
                 },
-                "required": ["time_str"]
-            }
-        }
+                "required": ["time_str"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "list_gnome_alarms",
             "description": "List all active alarms currently set in Ubuntu's native GNOME Clocks app.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
-            }
-        }
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
     {
         "type": "function",
@@ -92,12 +92,12 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "properties": {
                     "name_or_id": {
                         "type": "string",
-                        "description": "The name or ID of the alarm to remove."
+                        "description": "The name or ID of the alarm to remove.",
                     }
                 },
-                "required": ["name_or_id"]
-            }
-        }
+                "required": ["name_or_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -109,16 +109,16 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "properties": {
                     "duration_seconds": {
                         "type": "integer",
-                        "description": "Duration of the timer in seconds (e.g., 300 for 5 minutes)."
+                        "description": "Duration of the timer in seconds (e.g., 300 for 5 minutes).",
                     },
                     "name": {
                         "type": "string",
-                        "description": "Optional label for the timer (e.g., 'Tea timer', 'Pasta')."
-                    }
+                        "description": "Optional label for the timer (e.g., 'Tea timer', 'Pasta').",
+                    },
                 },
-                "required": ["duration_seconds"]
-            }
-        }
+                "required": ["duration_seconds"],
+            },
+        },
     },
     {
         "type": "function",
@@ -130,31 +130,28 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "properties": {
                     "message": {
                         "type": "string",
-                        "description": "The reminder text or task (e.g., 'check the oven', 'call John', 'take medication')."
+                        "description": "The reminder text or task (e.g., 'check the oven', 'call John', 'take medication').",
                     },
                     "time_str": {
                         "type": "string",
-                        "description": "Time duration or expression (e.g., '5 minutes', '30 seconds', 'in 1 hour', '7:30 PM')."
+                        "description": "Time duration or expression (e.g., '5 minutes', '30 seconds', 'in 1 hour', '7:30 PM').",
                     },
                     "delay_seconds": {
                         "type": "number",
-                        "description": "Optional direct delay in seconds (e.g. 300 for 5 minutes)."
-                    }
+                        "description": "Optional direct delay in seconds (e.g. 300 for 5 minutes).",
+                    },
                 },
-                "required": ["message"]
-            }
-        }
+                "required": ["message"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "list_reminders",
             "description": "List all active pending internal reminders set in Orion.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
-            }
-        }
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
     {
         "type": "function",
@@ -166,13 +163,13 @@ AVAILABLE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "properties": {
                     "identifier": {
                         "type": "string",
-                        "description": "The reminder ID or keyword matching the reminder message to cancel."
+                        "description": "The reminder ID or keyword matching the reminder message to cancel.",
                     }
                 },
-                "required": ["identifier"]
-            }
-        }
-    }
+                "required": ["identifier"],
+            },
+        },
+    },
 ]
 
 
@@ -191,7 +188,9 @@ def execute_tool(tool_name: str, arguments: dict[str, Any] | None = None) -> str
             return "Error: No search query specified. You must provide a full search query string in 'query'. Pagination, ids, and cursors are not supported."
         func = TOOLS[tool_name]
         sig = inspect.signature(func)
-        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
 
         if has_var_keyword:
             result = func(**arguments)
