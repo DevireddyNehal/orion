@@ -10,6 +10,12 @@ from .gnome_clock import (
     set_gnome_alarm,
     set_gnome_timer,
 )
+from .google_calendar import (
+    create_calendar_event,
+    delete_calendar_event,
+    get_today_agenda,
+    list_upcoming_events,
+)
 from .reminders import (
     cancel_reminder,
     list_reminders,
@@ -26,6 +32,10 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "set_reminder": set_reminder,
     "list_reminders": list_reminders,
     "cancel_reminder": cancel_reminder,
+    "get_today_agenda": get_today_agenda,
+    "list_upcoming_events": list_upcoming_events,
+    "create_calendar_event": create_calendar_event,
+    "delete_calendar_event": delete_calendar_event,
 }
 
 AVAILABLE_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -167,6 +177,88 @@ AVAILABLE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     }
                 },
                 "required": ["identifier"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_today_agenda",
+            "description": "Fetch all Google Calendar events scheduled for today in the user's primary calendar.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_upcoming_events",
+            "description": "List upcoming events from the user's primary Google Calendar over the next N days.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return (default: 15).",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days ahead to search (default: 30).",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional search term to filter events by keyword or topic (e.g. 'hackathon', 'meeting', 'flight', 'doctor').",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_calendar_event",
+            "description": "Create and schedule a new event on the user's primary Google Calendar.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Title or summary of the meeting/event.",
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "Start time expression (e.g. 'today at 3pm', 'tomorrow at 10:30 am', 'in 2 hours', '2026-10-21 15:00').",
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "Optional end time expression. Defaults to 1 hour after start time if omitted.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional notes or description for the event.",
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "Optional event location or video call link.",
+                    },
+                },
+                "required": ["summary", "start_time"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_calendar_event",
+            "description": "Delete a calendar event from Google Calendar by ID or exact title match.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id_or_summary": {
+                        "type": "string",
+                        "description": "The event ID or title of the event to delete.",
+                    }
+                },
+                "required": ["event_id_or_summary"],
             },
         },
     },
