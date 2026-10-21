@@ -108,6 +108,7 @@ class LLMOrchestrator:
             f"Fact Precision & Tools:\n"
             f"- Never fabricate, guess, or assume real-time facts, current events, recent sports champions, scores, dates, or upcoming schedules.\n"
             f"- For reminders or task alerts (e.g., 'remind me to do X in N minutes'), call the `set_reminder` tool to schedule an internal voice reminder.\n"
+            f"- User Vault Notes, Projects & Roadmaps: You have direct access to the user's Obsidian vault containing all their project plans (e.g. Orion, Blumetara, F1-Strategist), roadmaps, subject notes, to-do lists, and documents via `read_obsidian_note`, `search_obsidian_notes`, and `append_obsidian_note`. Whenever the user asks about their notes, projects, plans, roadmaps, daily to-dos, or documents, ALWAYS call these tools to inspect or search their vault before answering. Never claim you lack access to their projects or notes.\n"
             f"- If the user asks about anything current, recent, or time-sensitive, call tools like web_search as needed.\n"
             f"- Speak in smooth, natural, continuous spoken prose. NEVER use markdown list hyphens (- ), bullet points, bold headers, or raw LaTeX math formulas (write out math expressions in natural words, e.g., 'E equals m c squared')."
         )

@@ -16,6 +16,11 @@ from .google_calendar import (
     get_today_agenda,
     list_upcoming_events,
 )
+from .obsidian import (
+    append_obsidian_note,
+    read_obsidian_note,
+    search_obsidian_notes,
+)
 from .reminders import (
     cancel_reminder,
     list_reminders,
@@ -36,6 +41,9 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "list_upcoming_events": list_upcoming_events,
     "create_calendar_event": create_calendar_event,
     "delete_calendar_event": delete_calendar_event,
+    "append_obsidian_note": append_obsidian_note,
+    "read_obsidian_note": read_obsidian_note,
+    "search_obsidian_notes": search_obsidian_notes,
 }
 
 AVAILABLE_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -259,6 +267,68 @@ AVAILABLE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     }
                 },
                 "required": ["event_id_or_summary"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "append_obsidian_note",
+            "description": "Append a note or to-do task to an Obsidian vault note. Can target subject notes (e.g. 'FEE', 'ECE', 'Projects/Orion'), a daily to-do checklist, or general notes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The note or task content to capture.",
+                    },
+                    "note_name": {
+                        "type": "string",
+                        "description": "Optional name of the target note, subject, or date (e.g. 'daily', 'FEE', 'ECE', 'To-Do', 'Notes', 'Projects/Orion'). If 'daily' or omitted for tasks, saves to today's daily checklist note (YYYY-MM-DD.md).",
+                    },
+                    "is_todo": {
+                        "type": "boolean",
+                        "description": "Set to true if this entry is a to-do item or task to check off (formats as '- [ ] task').",
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_obsidian_note",
+            "description": "Read and summarize content or pending to-do tasks from an Obsidian note by note name, subject, or date.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_name": {
+                        "type": "string",
+                        "description": "The title, subject, or date of the note to read (e.g. 'daily', 'Module 1', 'FEE', 'To-Do', 'Notes'). Defaults to today's daily note or general notes if empty.",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_obsidian_notes",
+            "description": "Search across all Obsidian notes, subjects, projects, and to-do lists by keyword.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search keywords or topic to find in notes.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Optional maximum number of matching notes to return (default: 5).",
+                    },
+                },
+                "required": ["query"],
             },
         },
     },
